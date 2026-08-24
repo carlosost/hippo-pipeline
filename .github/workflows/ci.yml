@@ -1,0 +1,88 @@
+# Fast checks first, slow checks last (playbook 4.3): a broken lint fails in seconds,
+# not after waiting for the system tier.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # -------------------------------------------------- stage 1: lint + types --
+  static:
+    name: lint + typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --all-groups
+      - name: ruff
+        run: uv run ruff check src tests
+      - name: ruff format
+        run: uv run ruff format --check src tests
+      - name: architectural constraints (ADR-003)
+        run: bash scripts/lint_architecture.sh
+      - name: README / Makefile drift
+        run: bash scripts/check_docs_commands.sh
+      - name: mypy strict
+        run: uv run mypy
+
+  # ------------------------------------- stage 2: deterministic tier (gate) --
+  deterministic:
+    name: deterministic tests (py${{ matrix.python }})
+    needs: static
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Lowest supported and current: the gap is where "works on my machine" lives.
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install ${{ matrix.python }}
+      - run: uv sync --all-groups --python ${{ matrix.python }}
+      - name: unit + bdd (must be 100%)
+        run: uv run pytest tests/unit tests/bdd -m "not system" --cov --cov-report=term-missing
+
+  # ------------------------- stage 3: system tier (informational, not a gate) --
+  system:
+    name: system-behavior tier
+    needs: deterministic
+    runs-on: ubuntu-latest
+    continue-on-error: true    # baseline-gated by design (ADR-004), never blocks merge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --all-groups
+      - name: profile the sample dataset
+        run: python3 scripts/profile_sample_data.py
+      - name: system tests
+        run: uv run pytest tests/system -m system
+
+  # ------------------------------------------------ stage 4: dependency audit --
+  audit:
+    name: dependency audit
+    needs: static
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --all-groups
+      # AP-14: never auto-fix in a version-locked ecosystem. Advisories in direct
+      # runtime dependencies block; transitive and dev-tooling advisories are
+      # time-boxed and reported, not auto-remediated.
+      - name: pip-audit
+        run: uv run pip-audit || echo "::warning::pip-audit reported advisories - triage by threat model, do not auto-fix"
