@@ -1,0 +1,48 @@
+{
+  "_comment": [
+    "Claude Code hooks for hippo-pipeline. These fire ONLY in Claude Code CLI",
+    "sessions (the `claude` command in a terminal). They do NOT run in Cowork,",
+    "claude.ai, or any other interface - see GENERAL_ENGINEERING_PLAYBOOK.md 5.",
+    "In those interfaces the same checks are available as `make lint` and `make test`,",
+    "and CI runs them regardless.",
+    "Hook 1: architectural constraint lint  (playbook Pattern 1, enforces ADR-003)",
+    "Hook 2: auto-run the matching unit test (playbook Pattern 2)",
+    "Hook 3: YAML/JSON syntax validation     (playbook Pattern 3)",
+    "Hook 4: Makefile <-> README contract    (playbook Pattern 4)",
+    "Hook 5: PMA freshness reminder          (project-specific, enforces 2.3)"
+  ],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 scripts/hooks/filepath.py | { read -r f; case \"$f\" in */src/hippo_pipeline/*.py) bash scripts/lint_architecture.sh \"$f\" ;; esac; }",
+            "statusMessage": "Checking architectural constraints (ADR-003)..."
+          },
+          {
+            "type": "command",
+            "command": "python3 scripts/hooks/filepath.py | { read -r f; base=\"$(basename \"$f\" .py)\"; case \"$f\" in */src/hippo_pipeline/*.py) if [ \"$base\" != \"__init__\" ] && [ -f \"tests/unit/test_${base}.py\" ]; then if command -v uv >/dev/null 2>&1; then uv run pytest \"tests/unit/test_${base}.py\" -q; else python3 -m pytest \"tests/unit/test_${base}.py\" -q; fi; else echo \"NO UNIT TEST for ${base} - tests/unit/test_${base}.py is missing\"; fi ;; esac; }",
+            "statusMessage": "Running the matching unit test..."
+          },
+          {
+            "type": "command",
+            "command": "python3 scripts/hooks/filepath.py | { read -r f; case \"$f\" in *.yml|*.yaml|*.json) bash scripts/validate_config.sh \"$f\" ;; esac; }",
+            "statusMessage": "Validating config syntax..."
+          },
+          {
+            "type": "command",
+            "command": "python3 scripts/hooks/filepath.py | { read -r f; case \"$f\" in */Makefile|Makefile|*/README.md|README.md) bash scripts/check_docs_commands.sh ;; esac; }",
+            "statusMessage": "Checking Makefile <-> README consistency..."
+          },
+          {
+            "type": "command",
+            "command": "python3 scripts/hooks/pma_freshness.py",
+            "statusMessage": "Checking Project Memory freshness..."
+          }
+        ]
+      }
+    ]
+  }
+}
