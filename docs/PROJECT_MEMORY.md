@@ -117,11 +117,30 @@ question.
 
 ### 2.5 Output contracts
 
-**Not yet defined.** Blocked by OQ-05 (format and destination) and OQ-06 (metric set).
+Fixed by ADR-008 (format and layout) and ADR-011 (the quarantine sinks and the manifest).
+What each metric's columns are remains open — that is OQ-06 and OQ-08, and each metric
+declares its own.
 
-Once defined, the rule is fixed by ADR-005: output schemas are **additive only**. New
-fields arrive with a default; existing fields are never removed or retyped without an
-ADR naming the affected consumers.
+Every run writes to `out/`:
+
+| Path | Contents | Fixed by |
+|---|---|---|
+| `out/<metric_name>.csv` | one file per registered metric, columns as declared in `@metric` | ADR-008 |
+| `out/<metric_name>.json` | the same rows, for consumers that prefer JSON | ADR-008 |
+| `out/_rejected.csv` | schema-invalid records: source file, record index, reason codes, raw record | ADR-011 |
+| `out/_excluded.csv` | valid records outside our pharmacy scope, same shape | ADR-011 |
+| `out/_manifest.json` | records read / accepted / rejected / excluded, counts per reason code, counts per source file, reject rate, and the run's parameters | ADR-011 |
+
+Two invariants hold across every run and are tests, not comments:
+
+- `read == accepted + rejected + excluded`
+- identical inputs produce byte-identical outputs (charter §1.3.4) — which is why metrics
+  execute in sorted name order and emit sorted rows, and why money is `Decimal`
+
+The rule is fixed by ADR-005: output schemas are **additive only**. New fields arrive with
+a default; existing fields are never removed or retyped without an ADR naming the affected
+consumers. Reason codes are part of that contract — adding one is free, renaming one breaks
+whoever aggregates by it.
 
 ---
 
@@ -142,6 +161,7 @@ Numbering is sequential and permanent. A superseded ADR keeps its number, is mar
 | [ADR-008](#adr-008-metrics-are-registered-python-functions-over-an-exported-fact-table) | Metrics are registered Python functions over an exported fact table | Accepted |
 | [ADR-009](#adr-009-the-python-standard-library-is-the-compute-engine-zero-runtime-dependencies) | The Python standard library is the compute engine; zero runtime dependencies | Accepted |
 | [ADR-010](#adr-010-no-metric-definition-language-no-mcp-server-no-semantic-layer) | No metric definition language, no MCP server, no semantic layer | Accepted |
+| [ADR-011](#adr-011-malformed-records-are-quarantined-out-of-scope-records-are-excluded-separately) | Malformed records are quarantined; out-of-scope records are excluded separately | Accepted |
 
 **On numbering.** Session 001 pre-assigned ADR numbers to decisions that had not been made
 (`OQ-07 → ADR-013`). That was a mistake: numbers are assigned when an ADR is *written*, and
@@ -350,7 +370,7 @@ on.
 
 ### ADR-008: Metrics are registered Python functions over an exported fact table
 
-**Date:** 2026-08-25 · **Status:** Accepted · **Resolves:** OQ-07
+**Date:** 2026-08-25 · **Amended:** 2026-08-25 · **Status:** Accepted · **Resolves:** OQ-07
 
 **Context.** The brief asks for a foundation that business teams *and AI agents working on
 their behalf* can use autonomously to "extract metrics or extend with new functionality."
@@ -386,6 +406,24 @@ discovery, execution, export and documentation follow from registration.
 
 A metric receives an immutable, already-validated, already-revert-resolved dataset and
 returns rows. It performs no IO, opens no files, and never sees a raw record.
+
+**Amendment, 2026-08-25 — the signature is now fixed:**
+
+```python
+def <name>(data: Dataset) -> Sequence[Mapping[str, object]]: ...
+```
+
+`Dataset` is a frozen object exposing `.claims`, `.reverts` and `.pharmacies`. One
+argument rather than a bare claim list, because several metrics worth proposing need chain
+membership or revert timing — a reversal-rate-per-chain metric cannot be written against
+`Sequence[Claim]` alone.
+
+The cost, stated rather than discovered: every metric re-scans the claims, so the runner is
+O(metrics × claims). At 27,076 records and 69 ms per pass, ten metrics cost under a second.
+At 100M records with twenty metrics it is a problem, and the escape hatch is a fold/reducer
+protocol where each metric declares an accumulator and one pass feeds them all. That is a
+future ADR, taken when a measurement demands it — not now, because it makes writing a metric
+materially harder and that works directly against this ADR's purpose.
 
 **(B) Read path — every run writes a flat, self-describing export to `out/`:** the cleaned
 fact table, one file per metric, and the quarantine table carrying each rejected record with
@@ -552,6 +590,94 @@ weighed. A documented rejection with named reversal conditions answers both; a h
 server answers neither.
 
 
+---
+
+### ADR-011: Malformed records are quarantined; out-of-scope records are excluded separately
+
+**Date:** 2026-08-25 · **Status:** Accepted · **Resolves:** OQ-02
+
+**Context.** The brief states that some events do not comply with the schema and leaves the
+handling to us. Measured against the provided data (§2.4):
+
+- **3 of 27,076 claims are schema-invalid** — two missing `quantity`, one with
+  `quantity == 0`. All three belong to a **valid** pharmacy (`3333333333`), so pharmacy
+  validity cannot be used to screen them out.
+- **4,085 claims (15.1%) reference an NPI absent from the pharmacy file**, across exactly
+  three NPIs. These records are **not defective**. They are well-formed events for
+  pharmacies outside our scope.
+
+Three candidate policies existed. Dropping invalid records silently makes every downstream
+number unexplainable — the classic pipeline horror story, where a total changes because
+records vanished and nobody can say which. Failing the run on any invalid record lets one
+bad record in a million block the business, and would fail on the provided sample as
+shipped. That leaves quarantine.
+
+The decision that matters is not "quarantine" — it is **refusing to conflate a defect with
+an exclusion**. One sink would report a 15.1% reject rate for a source whose actual defect
+rate is 0.011%, and would bury three real defects under 4,085 records that are perfectly
+fine.
+
+**Decision.**
+
+1. **Two sinks, two meanings.**
+
+   | File | Contains | Sample data |
+   |---|---|---|
+   | `out/_rejected.csv` | records that violate the schema — **data defects** | 3 |
+   | `out/_excluded.csv` | records that are valid but out of scope — **not our pharmacies** | 4,085 |
+
+2. **Reason codes, not prose.** Every quarantined record carries a list of machine-readable
+   codes plus its source filename and record index: `missing_field:<name>`,
+   `not_a_number:<field>`, `non_positive:quantity`, `unparseable_timestamp`,
+   `not_an_object`, `npi_not_in_pharmacy_dataset`, `claim_not_accepted`. Codes aggregate;
+   sentences do not. A record may carry several — the first failure is not necessarily the
+   interesting one.
+
+3. **A revert whose target claim was rejected or excluded is itself excluded**, with code
+   `claim_not_accepted`. The revert is not malformed; its target simply is not in scope.
+   Counting it anyway would make reversal counts disagree with claim counts, which is worse
+   than either number being absent. In the provided data this covers 45 reverts.
+
+4. **Every run writes `out/_manifest.json`:** records read, accepted, rejected and excluded;
+   counts per reason code; counts per source file; and the reject rate. The manifest is what
+   makes the two sinks discoverable and the totals auditable.
+
+5. **The run exits non-zero when `rejected / read` exceeds `--max-reject-rate`, default
+   `0.01`.** Exclusion is **never** a failure condition — being out of scope is not a defect,
+   and a threshold on it would fail this dataset at 15%.
+
+6. **A metric that raises fails the run.** Quarantine is for *data*. A defect in our own code
+   is not a data-quality event, and routing it into a quarantine file is how a bug ships
+   disguised as a bad record.
+
+**Consequences.**
+
+- **`read == accepted + rejected + excluded`, always.** This identity is the reason every
+  headline number is explainable, and it is a test, not a comment.
+- Reason codes are a data contract and are therefore additive-only under ADR-005. Adding a
+  code is free; renaming one breaks whoever aggregates by it.
+- `out/` now holds files that are not metrics. The manifest is what distinguishes them;
+  the leading underscore is a convention, not a guarantee.
+- The 1% threshold is a **placeholder until measured** (playbook §4.5). It is not derived
+  from anything — it is chosen because the sample sits at 0.011%, three orders of magnitude
+  below it, so the gate is not load-bearing today. The number is provisional until real
+  traffic gives it meaning.
+- Writing `_excluded.csv` costs 4,085 rows of output on the sample. Accepted deliberately:
+  "which pharmacies are sending us claims that we have no record of?" is a real business
+  question, and three unknown NPIs carrying 4,085 claims is a data-onboarding lead, not
+  noise.
+
+**Alternatives considered.**
+
+| Policy | Verdict |
+|---|---|
+| Drop invalid records silently | Rejected — makes totals unexplainable and unauditable |
+| Fail the run on any invalid record | Rejected — fails on the provided sample as shipped; demands an allowlist from day one |
+| Quarantine, single sink | Rejected — reports a 15.1% reject rate for a source with 0.011% defects, burying three real defects under 4,085 healthy records |
+| Quarantine, exclusions counted but not written | Rejected — the count answers "how many?" but not "which pharmacies?", and the second question is the one with business value |
+| **Quarantine, two sinks (chosen)** | **Accepted** |
+
+
 ## 4. Open Questions
 
 Every one of these is a decision **not yet made**. Recording them as questions rather
@@ -569,9 +695,10 @@ decided, and it changes as evidence arrives.
 |---|---|---|
 | ~~1~~ | ~~**OQ-07** — the extension surface~~ | **Resolved by ADR-008 + ADR-010** (session 003). It dominated OQ-01, which is why it went first. |
 | ~~2~~ | ~~**OQ-01** — compute engine~~ | **Resolved by ADR-009** (session 003). Took ten minutes once OQ-07 was fixed, and landed on the opposite answer from the spike's provisional lean — which is the sequencing correction paying for itself. |
-| **1** | **OQ-02** — malformed-record policy | Next. Now a small decision: ADR-009 means it is plain Python, and ADR-008 fixed where rejects are exported. What remains is the policy itself — drop, fail, or quarantine — and the shape of the reason. |
-| **2** | **OQ-03, OQ-04, OQ-10, OQ-11** — revert and reference-data semantics | Pure domain rules, independent of every decision above, and the highest-risk correctness decisions in the project. |
-| **3** | **OQ-05, OQ-09** — output format, idempotency, late arrivals | Partly constrained by ADR-008 (CSV + JSON to `out/`); what remains is idempotency and late-arriving reverts. |
+| ~~3~~ | ~~**OQ-02** — malformed-record policy~~ | **Resolved by ADR-011** (session 003). Quarantine, with rejection and exclusion kept apart. |
+| **1** | **OQ-03, OQ-04, OQ-10, OQ-11** — revert and reference-data semantics | Next. Pure domain rules, independent of every decision above, and the highest-risk correctness decisions in the project — the ones a reviewer will actually probe. Four facets of one question, so one spec session. |
+| **2** | **F-02 + F-04 together** — the domain model and the metric registry | Sequenced together deliberately. F-04's mechanism has no open questions, but built alone its only caller would be its own tests — AP-11, which `CLAUDE.md` forbids. It ships with a real caller or it does not ship. |
+| **3** | **OQ-09** — idempotency and late-arriving reverts | Output format is fixed by ADR-008/011; what remains is whether re-runs are full-recompute. |
 | **4** | **OQ-06, OQ-08** — the metric set and the unit-price definition | Cheapest to change, and ADR-008 gives them a place to live. |
 | **5** | **OQ-12** — deployment and ownership model | Prose in the README, written once the system it describes exists. |
 
@@ -591,16 +718,16 @@ Numbers are **not** reserved for unwritten ADRs — see the note under the ADR i
 | ID | Question | Blocks | Status |
 |---|---|---|---|
 | OQ-01 | Which compute engine? | all of `gateway/` | **Resolved — ADR-009** |
-| OQ-02 | What happens to a malformed record? | ingestion, the quarantine export | Open — *next* |
-| OQ-03 | What exactly does a revert invalidate? | every metric | Open |
-| OQ-04 | Is a revert `id` an identity? How are repeats handled? | revert resolution | Open |
-| OQ-05 | Output format and destination? | the writers | Partly resolved — ADR-008 fixes CSV + JSON to `out/`; idempotency remains |
+| OQ-02 | What happens to a malformed record? | ingestion, the quarantine export | **Resolved — ADR-011** |
+| OQ-03 | What exactly does a revert invalidate? | every metric | Open — *next* |
+| OQ-04 | Is a revert `id` an identity? How are repeats handled? | revert resolution | Open — *next* |
+| OQ-05 | Output format and destination? | the writers | **Resolved — ADR-008, ADR-011** (see §2.5) |
 | OQ-06 | Which metrics beyond the required set? | `metrics/` | Open |
 | OQ-07 | How do agents extend this without reading ingestion code? | the whole shape of `metrics/` | **Resolved — ADR-008, ADR-010** |
 | OQ-08 | How is unit price defined? | `metrics/` | Open |
 | OQ-09 | Are re-runs idempotent? What about late-arriving files? | the runner | Open |
-| OQ-10 | What do the naive timestamps mean? | any time-bucketed metric | Open |
-| OQ-11 | Is pharmacy reference data point-in-time or current-state? | the pharmacy join | Open |
+| OQ-10 | What do the naive timestamps mean? | any time-bucketed metric | Open — *next* |
+| OQ-11 | Is pharmacy reference data point-in-time or current-state? | the pharmacy join | Open — *next* |
 | OQ-12 | Deployment, orchestration and team ownership model? | README prose only | Open |
 
 ---
@@ -624,7 +751,7 @@ rejection reason in one pass. The spike's leading recommendation is DuckDB — *
 explicitly conditional on OQ-07**, which is why OQ-07 was decided first. OQ-07 landed on
 Python functions (ADR-008), the condition failed, and ADR-009 chose the standard library.
 
-**OQ-02 — What happens to a malformed record?**
+**OQ-02 — What happens to a malformed record?** — **RESOLVED by [ADR-011](#adr-011-malformed-records-are-quarantined-out-of-scope-records-are-excluded-separately): quarantine, with rejection and exclusion in separate sinks.** Retained below as the record of what the question was.
 The sample contains 2 claims missing `quantity` and 1 with `quantity == 0`. Options:
 drop silently (never — it makes totals unexplainable); fail the run (safe, but one bad
 record in a million blocks the business); or **quarantine**: exclude from metrics, write
@@ -719,11 +846,11 @@ says so and the Definition of Done in `CLAUDE.md` is satisfied.
 | ID | Feature | Spec file | Depends on | Status |
 |---|---|---|---|---|
 | F-00 | Repository foundation: layout, toolchain, hooks, PMA | — (this document) | — | **Done** (session 001) |
-| F-01 | Ingestion gateway: read pharmacies, claims, reverts; validate; quarantine | `feature-01-ingestion.md` | ~~OQ-01~~, OQ-02 | Blocked on OQ-02 only |
+| F-01 | Ingestion gateway: read pharmacies, claims, reverts; validate; quarantine | `feature-01-ingestion.md` | ~~OQ-01~~, ~~OQ-02~~ | **Ready to specify** |
 | F-02 | Domain model and revert resolution | `feature-02-revert-resolution.md` | OQ-03, OQ-04, OQ-10, OQ-11 | Not specified |
 | F-03 | Required metrics | `feature-03-required-metrics.md` | F-02, F-04, OQ-08 | Not specified |
-| F-04 | The metric registry (`@metric`, discovery, `METRICS.md` generation) | `feature-04-metric-registry.md` | ~~OQ-07~~ | **Ready to specify** — ADR-008 fixed its contract; depends on no open question |
-| F-05 | Output serialization and run manifest | `feature-05-outputs.md` | OQ-09 (format fixed by ADR-008) | Not specified |
+| F-04 | The metric registry (`@metric`, discovery, `METRICS.md` generation) | `feature-04-metric-registry.md` | ~~OQ-07~~, F-02 | Ready — but **specified and built with F-02**, never alone (AP-11) |
+| F-05 | Output serialization and run manifest | `feature-05-outputs.md` | OQ-09 (format fixed by ADR-008/011) | Not specified |
 
 ---
 

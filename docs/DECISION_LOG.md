@@ -221,3 +221,46 @@ policy (drop / fail the run / quarantine) and the shape of the reason record. Th
 data gives three concrete cases to decide against — two claims missing `quantity` and one
 with `quantity == 0`, all three belonging to a *valid* pharmacy. Then **F-04**, the metric
 registry, which ADR-008 already unblocked and which depends on no open question.
+
+### Session 003 addendum — OQ-02 resolved (ADR-011), ADR-008 amended
+
+**Decision.** Quarantine — with the distinction that actually mattered: **rejection and
+exclusion are different things and get different sinks.**
+
+3 of 27,076 claims are schema-invalid. 4,085 (15.1%) reference NPIs absent from the
+pharmacy file — and those records are not defective, they are simply not ours. A single
+quarantine sink would have reported a 15.1% reject rate for a source whose real defect
+rate is 0.011%, and buried three genuine defects under 4,085 healthy records. So:
+`out/_rejected.csv` for defects, `out/_excluded.csv` for out-of-scope, counted separately
+in `out/_manifest.json`.
+
+The rest of ADR-011: machine-readable reason codes rather than prose; a revert orphaned by
+its target's quarantine is itself excluded with `claim_not_accepted` (45 records here);
+the run exits non-zero above `--max-reject-rate`, default 1%, while exclusion is never a
+failure; and a metric that raises fails the run, because a defect in our code is not a
+data-quality event.
+
+`read == accepted + rejected + excluded` is now an invariant with a test behind it.
+
+**ADR-008 amended** to pin the metric signature: `(data: Dataset) -> Sequence[Mapping[str,
+object]]`, where `Dataset` is frozen and exposes `.claims`, `.reverts`, `.pharmacies`. A
+bare claim list was rejected because reversal-rate-per-chain cannot be written against it.
+The O(metrics × claims) cost is recorded along with its escape hatch (a fold protocol),
+which is a future ADR taken on measurement, not now.
+
+**§2.5 of the PMA is no longer empty.** The output contract is defined: one CSV and one
+JSON per metric, the two quarantine sinks, and the manifest.
+
+**F-04 re-sequenced, correcting my own claim.** Session 003 recorded F-04 as depending on
+no open question. True of the mechanism, and it dodged the fact that until the domain types
+exist the registry's only caller would be its own tests — AP-11 exactly, and the anti-pattern
+`CLAUDE.md` forbids. F-04 now ships with F-02 or not at all.
+
+**Next action.** **OQ-03, OQ-04, OQ-10 and OQ-11 in one spec session** — four facets of one
+question: what a revert actually invalidates. Concretely to decide: whether a revert
+timestamped *before* its claim is honoured (2 records); what happens to a revert whose
+`claim_id` is unknown (0 in the sample, so unexercised and still needing a policy); whether
+a revert `id` is an identity, given three ids appear twice with *different* timestamps;
+what the naive timestamps mean when pharmacies span time zones; and whether pharmacy
+reference data is point-in-time or current-state. These are the highest-risk correctness
+decisions in the project.
