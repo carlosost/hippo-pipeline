@@ -1,7 +1,7 @@
 # Commands referenced by the Definition of Done in CLAUDE.md.
 # Every target named in README.md must exist here - scripts/check_docs_commands.sh enforces it.
 .DEFAULT_GOAL := help
-.PHONY: help setup lint typecheck test test-unit test-bdd test-system audit check run clean tree
+.PHONY: help setup lint typecheck test test-unit test-bdd test-system audit check catalog run clean tree
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -16,6 +16,7 @@ lint:  ## Ruff + architectural constraint lint (ADR-003)
 	bash scripts/check_docs_commands.sh
 	bash scripts/check_fixture_integrity.sh
 	uv run python scripts/check_gherkin.py
+	bash scripts/check_catalog.sh
 
 typecheck:  ## mypy strict
 	uv run mypy
@@ -38,6 +39,9 @@ audit:  ## Dependency vulnerability audit (direct runtime deps are blocking; see
 	uv run pip-audit --strict || true
 
 check: lint typecheck test  ## Everything the merge gate requires
+
+catalog:  ## Regenerate docs/METRICS.md from the metric registry
+	uv run hippo catalog --write docs/METRICS.md
 
 run:  ## Run the pipeline CLI (see README for arguments)
 	uv run hippo $(ARGS)
