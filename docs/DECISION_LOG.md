@@ -314,3 +314,62 @@ feature files in `memory/features/` plus their Gherkin, failure scenarios first.
 specified together because F-04 built alone would have only its own tests as callers (AP-11),
 and because F-01's quarantine sinks and F-02's revert resolution share the reason-code
 contract. Implementation follows in a separate session, per playbook §2.5.
+
+---
+
+## Session 005 — 2026-08-25 — F-01, F-02 and F-04 specified
+
+**Goal.** Turn fourteen ADRs into executable acceptance criteria. Spec only — no
+implementation, per playbook §2.5.
+
+**Produced.** Three feature files in `memory/features/` and three Gherkin files carrying
+**41 scenarios**, failure paths first:
+
+| Feature | Scenarios | What it pins down |
+|---|---|---|
+| F-01 ingestion | 17 | Every reason code, leading-zero preservation, int-or-float quantity, exact `Decimal`, UTC conversion, header-by-name, `read == accepted + rejected + excluded`, the reject-rate threshold, and that exclusions never trip it |
+| F-02 revert resolution | 11 | All six ADR-012 rules, including the sample's exact case — one revert id, two timestamps — plus determinism and claim-order preservation |
+| F-04 metric registry | 13 | Import-time declaration checks, row-schema validation, a raising metric failing the run, sorted execution, `Decimal` surviving export, catalogue generation and drift, byte-identical reruns |
+
+**Three Conflict Checks run against all 14 ADRs** (playbook §1.5). No conflicts. Four traps
+surfaced that would otherwise have been discovered during implementation:
+
+1. **`json.load` converts numbers to `float` before any code sees them**, so `Decimal(str(v))`
+   inherits the float's error and quietly violates ADR-009. The fix is
+   `json.loads(..., parse_float=Decimal, parse_int=Decimal)` — recorded in F-01's Conflict
+   Check.
+2. **The metric writers perform IO, so they belong in `gateway/`, not `metrics/`.** The
+   instinct is to put them beside the registry; the arch lint would reject it. Recorded in
+   F-04.
+3. **Revert grouping must emit in sorted order**, not dict-insertion order, or the quarantine
+   file is not byte-stable. Recorded in F-02.
+4. **`discover()` makes import side effects load-bearing**, so it must be idempotent and
+   order-independent — hence execution sorted by name. Recorded in F-04.
+
+**Split of quarantine responsibility, pinned.** F-01 quarantines on *record shape and
+pharmacy scope*; F-02 quarantines on *linkage*. So `claim_not_found` and `claim_not_accepted`
+are produced by F-02, and F-01 knows nothing about revert semantics. That keeps the gateway
+free of domain rules and gives each layer one reason to reject.
+
+**Two tooling additions.**
+
+- `scripts/check_gherkin.py` parses every `.feature` file in `make lint` and CI. Gherkin
+  written before the implementation is only useful if it is real Gherkin, and a malformed
+  feature file should fail at spec time rather than in the session that tries to bind steps
+  to it.
+- `make test-bdd` now tolerates pytest's exit code 5 — and *only* 5 — because `tests/bdd`
+  legitimately collects nothing until step definitions exist. The guard carries its own
+  deletion condition: remove it the moment the first step definition lands.
+
+**What was deliberately NOT done.** No step definitions, no `src/` code. The spec session
+produces the contract; the implementation session is told the tests are the specification and
+is done when they pass.
+
+**Verification.** Full gate green: ruff, format, architectural lint (4 rules), doc drift,
+fixture integrity, Gherkin parse (41 scenarios), mypy strict, 5/5 deterministic tests.
+
+**Next action.** **Implement F-01, F-02 and F-04.** Order within the session: step definitions
+for all three feature files (red) → `domain/` types → `gateway/` readers and validation →
+revert resolution → registry and writers → one real metric wired to the real CLI, so the
+tested path is the shipped path before the session closes. Delete the `test-bdd` exit-5 guard
+in the same change.

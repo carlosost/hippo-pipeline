@@ -8,7 +8,7 @@
 > Process: `docs/GENERAL_ENGINEERING_PLAYBOOK.md`. Agent contract: `CLAUDE.md`.
 > Session history: `docs/DECISION_LOG.md`.
 
-**Last updated:** 2026-08-25 (session 004) · **Phase:** fully specified — every structural decision made, implementation not started
+**Last updated:** 2026-08-25 (session 005) · **Phase:** F-01, F-02 and F-04 specified with 41 Gherkin scenarios; implementation not started
 
 ---
 
@@ -851,7 +851,8 @@ decided, and it changes as evidence arrives.
 | ~~2~~ | ~~**OQ-01** — compute engine~~ | **Resolved by ADR-009** (session 003). Took ten minutes once OQ-07 was fixed, and landed on the opposite answer from the spike's provisional lean — which is the sequencing correction paying for itself. |
 | ~~3~~ | ~~**OQ-02** — malformed-record policy~~ | **Resolved by ADR-011** (session 003). Quarantine, with rejection and exclusion kept apart. |
 | ~~4~~ | ~~**OQ-03, OQ-04, OQ-10, OQ-11**~~ | **Resolved by ADR-012, ADR-013, ADR-014** (session 004). |
-| **1** | **F-01 + F-02 + F-04** — ingestion, domain model, metric registry | Next, and specified together. Every structural decision they depend on is now made. F-04 in particular ships with a real caller or not at all — built alone its only caller would be its own tests, which is AP-11 and `CLAUDE.md` forbids it. |
+| ~~5~~ | ~~**F-01 + F-02 + F-04** — spec~~ | **Specified in session 005**: three feature files, 41 Gherkin scenarios, three Conflict Checks. |
+| **1** | **F-01 + F-02 + F-04** — *implementation* | Next. Separate session from the spec, per playbook §2.5 — mixing them produces code that confirms the spec rather than testing it. Step definitions first, red, then the implementation. |
 | **2** | **OQ-09** — idempotency and late-arriving reverts | The last genuinely open engineering question. ADR-014's "the reference file is an input" already leans full-recompute; this makes it explicit. |
 | **3** | **OQ-06, OQ-08** — the metric set and the unit-price definition | Cheapest to change, and ADR-008 gives them a place to live. Decided with F-03 and F-04 in hand. |
 | **4** | **OQ-12** — deployment and ownership model | Prose in the README, written once the system it describes exists. |
@@ -1003,10 +1004,10 @@ says so and the Definition of Done in `CLAUDE.md` is satisfied.
 | ID | Feature | Spec file | Depends on | Status |
 |---|---|---|---|---|
 | F-00 | Repository foundation: layout, toolchain, hooks, PMA | — (this document) | — | **Done** (session 001) |
-| F-01 | Ingestion gateway: read pharmacies, claims, reverts; validate; quarantine | `feature-01-ingestion.md` | ~~OQ-01~~, ~~OQ-02~~ | **Ready to specify** |
-| F-02 | Domain model and revert resolution | `feature-02-revert-resolution.md` | ~~OQ-03, OQ-04, OQ-10, OQ-11~~ | **Ready to specify** |
+| F-01 | Ingestion gateway: read pharmacies, claims, reverts; validate; quarantine | `feature-01-ingestion.md` | ~~OQ-01~~, ~~OQ-02~~ | **Specified** — 17 scenarios |
+| F-02 | Domain model and revert resolution | `feature-02-revert-resolution.md` | ~~OQ-03, OQ-04, OQ-10, OQ-11~~ | **Specified** — 11 scenarios |
 | F-03 | Required metrics | `feature-03-required-metrics.md` | F-02, F-04, OQ-08 | Blocked on F-02/F-04 |
-| F-04 | The metric registry (`@metric`, discovery, `METRICS.md` generation) | `feature-04-metric-registry.md` | ~~OQ-07~~, F-02 | Ready — but **specified and built with F-02**, never alone (AP-11) |
+| F-04 | The metric registry (`@metric`, discovery, `METRICS.md` generation) | `feature-04-metric-registry.md` | ~~OQ-07~~, F-02 | **Specified** — 13 scenarios. Built with F-01/F-02, never alone (AP-11) |
 | F-05 | Output serialization and run manifest | `feature-05-outputs.md` | OQ-09 (format fixed by ADR-008/011) | Not specified |
 
 ---
