@@ -8,7 +8,7 @@
 > Process: `docs/GENERAL_ENGINEERING_PLAYBOOK.md`. Agent contract: `CLAUDE.md`.
 > Session history: `docs/DECISION_LOG.md`.
 
-**Last updated:** 2026-08-25 (session 003) · **Phase:** specified, implementation not started
+**Last updated:** 2026-08-25 (session 004) · **Phase:** fully specified — every structural decision made, implementation not started
 
 ---
 
@@ -161,7 +161,10 @@ Numbering is sequential and permanent. A superseded ADR keeps its number, is mar
 | [ADR-008](#adr-008-metrics-are-registered-python-functions-over-an-exported-fact-table) | Metrics are registered Python functions over an exported fact table | Accepted |
 | [ADR-009](#adr-009-the-python-standard-library-is-the-compute-engine-zero-runtime-dependencies) | The Python standard library is the compute engine; zero runtime dependencies | Accepted |
 | [ADR-010](#adr-010-no-metric-definition-language-no-mcp-server-no-semantic-layer) | No metric definition language, no MCP server, no semantic layer | Accepted |
-| [ADR-011](#adr-011-malformed-records-are-quarantined-out-of-scope-records-are-excluded-separately) | Malformed records are quarantined; out-of-scope records are excluded separately | Accepted |
+| [ADR-011](#adr-011-malformed-records-are-quarantined-out-of-scope-records-are-excluded-separately) | Malformed records are quarantined; out-of-scope records are excluded separately | Accepted (amended) |
+| [ADR-012](#adr-012-revert-resolution--a-claim-is-reverted-at-most-once-keyed-on-claim_id) | Revert resolution — a claim is reverted at most once, keyed on `claim_id` | Accepted |
+| [ADR-013](#adr-013-all-timestamps-are-interpreted-as-utc-and-the-assumption-is-published) | All timestamps are interpreted as UTC, and the assumption is published | Accepted |
+| [ADR-014](#adr-014-pharmacy-reference-data-is-current-state-not-point-in-time) | Pharmacy reference data is current-state, not point-in-time | Accepted |
 
 **On numbering.** Session 001 pre-assigned ADR numbers to decisions that had not been made
 (`OQ-07 → ADR-013`). That was a mistake: numbers are assigned when an ADR is *written*, and
@@ -594,7 +597,7 @@ server answers neither.
 
 ### ADR-011: Malformed records are quarantined; out-of-scope records are excluded separately
 
-**Date:** 2026-08-25 · **Status:** Accepted · **Resolves:** OQ-02
+**Date:** 2026-08-25 · **Amended:** 2026-08-25 · **Status:** Accepted · **Resolves:** OQ-02
 
 **Context.** The brief states that some events do not comply with the schema and leaves the
 handling to us. Measured against the provided data (§2.4):
@@ -632,6 +635,10 @@ fine.
    `not_an_object`, `npi_not_in_pharmacy_dataset`, `claim_not_accepted`. Codes aggregate;
    sentences do not. A record may carry several — the first failure is not necessarily the
    interesting one.
+
+   **Amendment, 2026-08-25:** ADR-012 adds `duplicate_revert_for_claim`,
+   `revert_precedes_claim` and `claim_not_found`. Additive per ADR-005 — the code list grows,
+   never renames.
 
 3. **A revert whose target claim was rejected or excluded is itself excluded**, with code
    `claim_not_accepted`. The revert is not malformed; its target simply is not in scope.
@@ -678,6 +685,153 @@ fine.
 | **Quarantine, two sinks (chosen)** | **Accepted** |
 
 
+---
+
+### ADR-012: Revert resolution — a claim is reverted at most once, keyed on `claim_id`
+
+**Date:** 2026-08-25 · **Status:** Accepted · **Resolves:** OQ-03, OQ-04
+
+**Context.** A reverted claim must be treated as though the fill never happened for revenue
+and volume, while the reversal itself stays measurable. Making that precise means answering
+three things the sample data forces (§2.4):
+
+- **Revert `id` is not unique.** Three ids each appear twice, with the **same `claim_id` but
+  different timestamps** — e.g. `44425520…` at `2026-01-01T12:31:37` and at
+  `2026-05-01T22:38:13`. Neither obvious policy is free: keying on `id` discards a real
+  record, keying on the whole record counts one reversal twice.
+- **Two reverts are timestamped *before* the claim they cancel.** Physically impossible. The
+  `claim_id` linkage is unambiguous; only the clock disagrees.
+- **Zero reverts point at an unknown `claim_id`** in this sample, so the orphan case is
+  entirely unexercised — and still needs a policy, because "unexercised" is not "impossible".
+
+**Decision.**
+
+1. **The reversal key is `claim_id`, not the revert `id`. A claim is reverted at most once.**
+   Where several reverts target one claim, the **earliest** timestamp wins and the extras are
+   counted under `duplicate_revert_for_claim`. Reversal count and reverted-claim count then
+   agree *by construction* and cannot silently diverge — which is the property that matters,
+   because every reversal-rate metric divides one by the other.
+
+2. **A reverted claim is retained, not deleted.** It stays in the fact table carrying
+   `reverted: bool` and `reverted_at: datetime | None`. It is excluded from revenue and fill
+   counts, and included in reversal metrics. Deleting it would make the reversal rate
+   uncomputable, and the brief explicitly calls the reversal itself a signal worth measuring.
+
+3. **A revert timestamped before its claim is honoured, and flagged.** The pharmacist did
+   submit a reversal; the linkage is sound and only the clock is wrong. The claim counts as
+   reverted, and the record is counted under `revert_precedes_claim`. Rejecting the revert
+   instead would leave money in the totals that somebody reversed — strict on data, wrong on
+   revenue.
+
+4. **A revert whose `claim_id` is unknown is excluded with `claim_not_found`, counted, and
+   never fails the run.** *This case was not observed and is decided anyway.* The rationale:
+   the pipeline is a full recompute over whatever files it is handed, so an unmatched
+   `claim_id` most likely means the claim is in a file this run was not given — an input
+   error, not a data defect. It becomes suspicious in bulk, which is why the manifest counts
+   it. (A revert orphaned because its target was itself rejected or excluded keeps the
+   distinct code `claim_not_accepted` from ADR-011 — different cause, different diagnosis.)
+
+**Consequences.**
+
+- Reversal resolution is a pure function of (claims, reverts) with no clock and no IO, so it
+  is unit-testable exhaustively. Every case above becomes a named test.
+- `duplicate_revert_for_claim`, `revert_precedes_claim` and `claim_not_found` join the reason
+  codes in ADR-011 — additive, per ADR-005.
+- The manifest reports all three counts. On this dataset that is 3, 2 and 0 respectively:
+  small numbers, deliberately visible, because they are exactly the signals that would grow
+  quietly if an upstream system started misbehaving.
+- **Choosing the earliest timestamp is an assumption, not a truth.** With `id` non-unique and
+  no sequence number, there is no way to tell which of two timestamps is real. Earliest is
+  chosen because a reversal is more plausibly recorded near its claim; it affects only
+  `reverted_at`, never whether the claim is reverted, so the blast radius is limited to
+  time-to-revert metrics.
+
+**Alternatives considered.**
+
+| Option | Verdict |
+|---|---|
+| Key on revert `id` | Rejected — three ids denote two events each; deduping discards a genuine reversal |
+| Key on the whole record `(id, claim_id, timestamp)` | Rejected — three claims would count as reverted twice, so reversal count exceeds reverted-claim count. Faithful to the raw stream, wrong for every rate |
+| Quarantine repeated revert ids entirely | Rejected — discards three real reversals to avoid choosing a timestamp; understates the rate to dodge a decision |
+| **Key on `claim_id`, earliest wins (chosen)** | **Accepted** |
+| Reject reverts that precede their claim | Rejected — leaves reversed revenue in the totals |
+| Reject both the revert and its claim | Rejected — discards a valid claim because a downstream record has a bad clock |
+| Fail the run on an orphan revert | Rejected — a missing input file is an operator error, and failing hard makes partial reprocessing impossible |
+
+---
+
+### ADR-013: All timestamps are interpreted as UTC, and the assumption is published
+
+**Date:** 2026-08-25 · **Status:** Accepted · **Resolves:** OQ-10
+
+**Context.** Every timestamp in the sample is naive ISO-8601 with no offset
+(`2026-01-01T00:00:07` … `2026-05-01T23:59:57`). Pharmacies span time zones, so any metric
+bucketed by day or month is ambiguous: two claims one minute apart can fall on different
+calendar days depending on the zone assumed. Silently picking one is how a day-boundary bug
+ships and survives for months.
+
+**Decision.** All timestamps are interpreted as **UTC**. The assumption is recorded
+explicitly in `out/_manifest.json` (`"time_basis": "UTC (assumed; source carries no offset)"`)
+and in `docs/METRICS.md`, so it travels with the numbers rather than living in a reviewer's
+memory.
+
+**Consequences.**
+
+- Day- and month-bucketed metrics are computable, which keeps claims-per-month and
+  time-to-revert on the table — two of the metrics most worth proposing (OQ-06).
+- Ordering comparisons (`revert_at < claim_at`, ADR-012) are well defined, because a single
+  basis applies to every record.
+- **The assumption is almost certainly wrong for at least some pharmacies.** It is stated
+  rather than hidden precisely so a reader can judge whether it matters for their question.
+  Where it does matter, the fix is real offsets in the source, not a heuristic here.
+- If the source ever supplies offsets, this ADR is superseded and the naive path becomes a
+  compatibility branch, not a rewrite.
+
+**Alternatives considered.**
+
+| Option | Verdict |
+|---|---|
+| Carry naive timestamps, forbid date-bucketed metrics | The most technically correct answer, and rejected: it rules out the most useful proposed metrics to avoid an assumption that can simply be declared |
+| Derive the zone from the pharmacy | Rejected — needs an NPI-to-timezone mapping the pharmacy file does not contain. Inventing or fetching one adds a dependency and a new error source the brief never asked for |
+| **Declare UTC and publish the assumption (chosen)** | **Accepted** |
+
+---
+
+### ADR-014: Pharmacy reference data is current-state, not point-in-time
+
+**Date:** 2026-08-25 · **Status:** Accepted · **Resolves:** OQ-11
+
+**Context.** The pharmacy dataset is described as slowly-changing reference data. That raises
+a question the file itself cannot answer: if a pharmacy is removed next month, do its past
+claims disappear from history? The file carries only `npi` and `chain` — no effective dates,
+no validity window.
+
+**Decision.** The pharmacy file supplied to a run is the truth **for the whole of that run**.
+Claims join it as current-state. A pharmacy absent from the file is out of scope for every
+claim in that run regardless of when the claim occurred, and is excluded per ADR-011.
+
+**Consequences.**
+
+- **History is not stable across runs.** Removing a pharmacy from the reference file changes
+  historical numbers on the next run. That is a real property of this design and is stated
+  here so nobody discovers it during a quarter-end reconciliation.
+- Byte-identical output (charter §1.3.4) holds for identical inputs — and the pharmacy file
+  is an input. Same files in, same bytes out; different reference file, legitimately
+  different history.
+- The manifest records a digest of the pharmacy file used, so any two runs that disagree can
+  be explained rather than argued about.
+- Point-in-time remains available later without a redesign: it needs effective-dated
+  reference data, and the join moves from `npi` to `npi` plus a validity window. That is a
+  source-data change first and a code change second.
+
+**Alternatives considered.**
+
+| Option | Verdict |
+|---|---|
+| Point-in-time join on an effective-dated dimension | Correct for auditability and rejected: the source provides no effective dates, so they would have to be invented — fabricated provenance is worse than stated simplicity |
+| **Current-state (chosen)** | **Accepted** |
+
+
 ## 4. Open Questions
 
 Every one of these is a decision **not yet made**. Recording them as questions rather
@@ -696,11 +850,14 @@ decided, and it changes as evidence arrives.
 | ~~1~~ | ~~**OQ-07** — the extension surface~~ | **Resolved by ADR-008 + ADR-010** (session 003). It dominated OQ-01, which is why it went first. |
 | ~~2~~ | ~~**OQ-01** — compute engine~~ | **Resolved by ADR-009** (session 003). Took ten minutes once OQ-07 was fixed, and landed on the opposite answer from the spike's provisional lean — which is the sequencing correction paying for itself. |
 | ~~3~~ | ~~**OQ-02** — malformed-record policy~~ | **Resolved by ADR-011** (session 003). Quarantine, with rejection and exclusion kept apart. |
-| **1** | **OQ-03, OQ-04, OQ-10, OQ-11** — revert and reference-data semantics | Next. Pure domain rules, independent of every decision above, and the highest-risk correctness decisions in the project — the ones a reviewer will actually probe. Four facets of one question, so one spec session. |
-| **2** | **F-02 + F-04 together** — the domain model and the metric registry | Sequenced together deliberately. F-04's mechanism has no open questions, but built alone its only caller would be its own tests — AP-11, which `CLAUDE.md` forbids. It ships with a real caller or it does not ship. |
-| **3** | **OQ-09** — idempotency and late-arriving reverts | Output format is fixed by ADR-008/011; what remains is whether re-runs are full-recompute. |
-| **4** | **OQ-06, OQ-08** — the metric set and the unit-price definition | Cheapest to change, and ADR-008 gives them a place to live. |
-| **5** | **OQ-12** — deployment and ownership model | Prose in the README, written once the system it describes exists. |
+| ~~4~~ | ~~**OQ-03, OQ-04, OQ-10, OQ-11**~~ | **Resolved by ADR-012, ADR-013, ADR-014** (session 004). |
+| **1** | **F-01 + F-02 + F-04** — ingestion, domain model, metric registry | Next, and specified together. Every structural decision they depend on is now made. F-04 in particular ships with a real caller or not at all — built alone its only caller would be its own tests, which is AP-11 and `CLAUDE.md` forbids it. |
+| **2** | **OQ-09** — idempotency and late-arriving reverts | The last genuinely open engineering question. ADR-014's "the reference file is an input" already leans full-recompute; this makes it explicit. |
+| **3** | **OQ-06, OQ-08** — the metric set and the unit-price definition | Cheapest to change, and ADR-008 gives them a place to live. Decided with F-03 and F-04 in hand. |
+| **4** | **OQ-12** — deployment and ownership model | Prose in the README, written once the system it describes exists. |
+
+**Every decision that shapes the code is now made.** What remains is one engineering question
+(OQ-09), the metric set itself (OQ-06, OQ-08 — cheap to change by construction), and prose.
 
 > **Correction (session 002).** Session 001 recorded OQ-01 as the next action. That was
 > the wrong order: the engine choice is downstream of the extension surface, not upstream
@@ -719,15 +876,15 @@ Numbers are **not** reserved for unwritten ADRs — see the note under the ADR i
 |---|---|---|---|
 | OQ-01 | Which compute engine? | all of `gateway/` | **Resolved — ADR-009** |
 | OQ-02 | What happens to a malformed record? | ingestion, the quarantine export | **Resolved — ADR-011** |
-| OQ-03 | What exactly does a revert invalidate? | every metric | Open — *next* |
-| OQ-04 | Is a revert `id` an identity? How are repeats handled? | revert resolution | Open — *next* |
+| OQ-03 | What exactly does a revert invalidate? | every metric | **Resolved — ADR-012** |
+| OQ-04 | Is a revert `id` an identity? How are repeats handled? | revert resolution | **Resolved — ADR-012** (it is not) |
 | OQ-05 | Output format and destination? | the writers | **Resolved — ADR-008, ADR-011** (see §2.5) |
 | OQ-06 | Which metrics beyond the required set? | `metrics/` | Open |
 | OQ-07 | How do agents extend this without reading ingestion code? | the whole shape of `metrics/` | **Resolved — ADR-008, ADR-010** |
 | OQ-08 | How is unit price defined? | `metrics/` | Open |
-| OQ-09 | Are re-runs idempotent? What about late-arriving files? | the runner | Open |
-| OQ-10 | What do the naive timestamps mean? | any time-bucketed metric | Open — *next* |
-| OQ-11 | Is pharmacy reference data point-in-time or current-state? | the pharmacy join | Open — *next* |
+| OQ-09 | Are re-runs idempotent? What about late-arriving files? | the runner | Open — *last open engineering question* |
+| OQ-10 | What do the naive timestamps mean? | any time-bucketed metric | **Resolved — ADR-013** |
+| OQ-11 | Is pharmacy reference data point-in-time or current-state? | the pharmacy join | **Resolved — ADR-014** |
 | OQ-12 | Deployment, orchestration and team ownership model? | README prose only | Open |
 
 ---
@@ -759,7 +916,7 @@ to a rejects sink with the reason and the source file, and report counts alongsi
 results. Whichever is chosen, the rejected count must appear in the output, because a
 number that changed because records vanished is a number nobody can trust.
 
-**OQ-03 — What exactly does a revert invalidate?**
+**OQ-03 — What exactly does a revert invalidate?** — **RESOLVED by [ADR-012](#adr-012-revert-resolution--a-claim-is-reverted-at-most-once-keyed-on-claim_id).** Retained below as the record of what the question was.
 Three concrete cases the sample forces: (a) 2 reverts are timestamped *before* the claim
 they cancel — honour or reject? (b) 45 reverts point at claims of an out-of-scope NPI —
 they must vanish with those claims, but must the count of "reverts processed" say so?
@@ -767,7 +924,7 @@ they must vanish with those claims, but must the count of "reverts processed" sa
 unknown is unexercised and must be decided anyway — the claim may simply be in a file
 that has not arrived yet (see OQ-09).
 
-**OQ-04 — Is a revert `id` an identity?**
+**OQ-04 — Is a revert `id` an identity?** — **RESOLVED by [ADR-012](#adr-012-revert-resolution--a-claim-is-reverted-at-most-once-keyed-on-claim_id): it is not. The reversal key is `claim_id`.** Retained below as the record of what the question was.
 Three revert ids each appear twice with *different* timestamps. So the same id denotes
 two different events, and neither obvious policy is free: deduplicating on `id`
 discards a real record; not deduplicating counts one reversal twice. Options: treat
@@ -815,14 +972,14 @@ after the claim window has been aggregated, the pipeline is either full-recomput
 watermarks and a whole class of bugs). Success criterion 4 — byte-identical outputs for
 identical inputs — is a hard constraint on either.
 
-**OQ-10 — What do the naive timestamps mean?**
+**OQ-10 — What do the naive timestamps mean?** — **RESOLVED by [ADR-013](#adr-013-all-timestamps-are-interpreted-as-utc-and-the-assumption-is-published): UTC by declaration, published in the manifest.** Retained below as the record of what the question was.
 Every timestamp in the sample lacks an offset. Pharmacies span time zones, so "claims
 per day" is ambiguous. Options: declare all timestamps UTC and say so in the output;
 carry them as naive local and forbid date-bucketed metrics until a zone is available;
 or derive the zone from the pharmacy. Silently calling them UTC without recording the
 assumption is how a day-boundary bug ships.
 
-**OQ-11 — Is pharmacy reference data point-in-time or current-state?**
+**OQ-11 — Is pharmacy reference data point-in-time or current-state?** — **RESOLVED by [ADR-014](#adr-014-pharmacy-reference-data-is-current-state-not-point-in-time): current-state.** Retained below as the record of what the question was.
 The file is described as slowly changing. If a pharmacy is removed next month, do its
 past claims disappear from history? Current-state joins are simple and rewrite history;
 point-in-time joins preserve history and need effective dating the file does not
@@ -847,8 +1004,8 @@ says so and the Definition of Done in `CLAUDE.md` is satisfied.
 |---|---|---|---|---|
 | F-00 | Repository foundation: layout, toolchain, hooks, PMA | — (this document) | — | **Done** (session 001) |
 | F-01 | Ingestion gateway: read pharmacies, claims, reverts; validate; quarantine | `feature-01-ingestion.md` | ~~OQ-01~~, ~~OQ-02~~ | **Ready to specify** |
-| F-02 | Domain model and revert resolution | `feature-02-revert-resolution.md` | OQ-03, OQ-04, OQ-10, OQ-11 | Not specified |
-| F-03 | Required metrics | `feature-03-required-metrics.md` | F-02, F-04, OQ-08 | Not specified |
+| F-02 | Domain model and revert resolution | `feature-02-revert-resolution.md` | ~~OQ-03, OQ-04, OQ-10, OQ-11~~ | **Ready to specify** |
+| F-03 | Required metrics | `feature-03-required-metrics.md` | F-02, F-04, OQ-08 | Blocked on F-02/F-04 |
 | F-04 | The metric registry (`@metric`, discovery, `METRICS.md` generation) | `feature-04-metric-registry.md` | ~~OQ-07~~, F-02 | Ready — but **specified and built with F-02**, never alone (AP-11) |
 | F-05 | Output serialization and run manifest | `feature-05-outputs.md` | OQ-09 (format fixed by ADR-008/011) | Not specified |
 

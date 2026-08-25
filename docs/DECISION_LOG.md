@@ -264,3 +264,53 @@ a revert `id` is an identity, given three ids appear twice with *different* time
 what the naive timestamps mean when pharmacies span time zones; and whether pharmacy
 reference data is point-in-time or current-state. These are the highest-risk correctness
 decisions in the project.
+
+---
+
+## Session 004 — 2026-08-25 — Revert and reference-data semantics; the spec is complete
+
+**Goal.** Resolve the four questions that define what a reversal actually means. These were
+the highest-risk correctness decisions in the project — the ones a reviewer will probe,
+because every one of them is a place where a plausible-looking number can be wrong.
+
+**Decisions.**
+
+| ADR | Decision | The trap it avoids |
+|---|---|---|
+| 012 | The reversal key is `claim_id`, not the revert `id`. A claim is reverted at most once; earliest timestamp wins | Three revert ids appear twice with *different* timestamps. Keying on `id` discards a real reversal; keying on the whole record counts three claims as reverted twice. Keying on `claim_id` makes reversal count and reverted-claim count agree by construction |
+| 012 | A revert timestamped *before* its claim is honoured and flagged | Rejecting it leaves reversed revenue in the totals — strict on data, wrong on money |
+| 012 | An orphan revert is excluded with `claim_not_found`, counted, never fatal | Unobserved in the sample and decided anyway: a missing `claim_id` most likely means a file this run was not given |
+| 013 | All timestamps are UTC, and the assumption is published in the manifest and METRICS.md | Silently assuming a zone is how a day-boundary bug ships and survives for months |
+| 014 | Pharmacy reference data is current-state | Point-in-time would need effective dates the source does not carry — fabricated provenance is worse than stated simplicity |
+
+**The modelling decision underneath all of it:** a reverted claim is **retained**, carrying
+`reverted` and `reverted_at`, not deleted. It leaves revenue and fill counts and enters
+reversal metrics. Deleting it would make the reversal rate uncomputable, and the brief calls
+the reversal itself a signal worth measuring.
+
+**Assumptions stated rather than hidden.** Three ADRs this session each name something that
+is a choice, not a truth: earliest-timestamp-wins affects `reverted_at` and therefore
+time-to-revert (ADR-012); UTC is almost certainly wrong for some pharmacies (ADR-013);
+history is not stable across runs if the reference file changes (ADR-014). Each is written
+into the ADR that causes it, so a reader meets the caveat next to the number rather than
+after it.
+
+**Three new reason codes**, added additively to ADR-011: `duplicate_revert_for_claim` (3
+records here), `revert_precedes_claim` (2), `claim_not_found` (0). Small numbers, deliberately
+visible — they are exactly the signals that would grow quietly if an upstream system started
+misbehaving.
+
+**The specification is now complete.** Every structural decision that shapes the code is
+made: 14 ADRs, and the only open questions left are OQ-09 (idempotency — one engineering
+call), OQ-06 and OQ-08 (which metrics, and how unit price is defined — cheap to change by
+construction, since ADR-008 gives each metric its own module), and OQ-12 (deployment prose).
+
+**Verification.** Full gate green: ruff, format, architectural lint (4 rules), doc drift,
+fixture integrity, mypy strict, 5/5 deterministic tests.
+
+**Next action.** **Specify F-01, F-02 and F-04 together** — ingestion and quarantine, the
+domain model and revert resolution, and the metric registry. One spec session producing three
+feature files in `memory/features/` plus their Gherkin, failure scenarios first. They are
+specified together because F-04 built alone would have only its own tests as callers (AP-11),
+and because F-01's quarantine sinks and F-02's revert resolution share the reason-code
+contract. Implementation follows in a separate session, per playbook §2.5.
