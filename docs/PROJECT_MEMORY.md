@@ -8,7 +8,7 @@
 > Process: `docs/GENERAL_ENGINEERING_PLAYBOOK.md`. Agent contract: `CLAUDE.md`.
 > Session history: `docs/DECISION_LOG.md`.
 
-**Last updated:** 2026-08-25 (session 002) · **Phase:** foundation, no pipeline code yet
+**Last updated:** 2026-08-25 (session 003) · **Phase:** specified, implementation not started
 
 ---
 
@@ -138,7 +138,15 @@ Numbering is sequential and permanent. A superseded ADR keeps its number, is mar
 | [ADR-004](#adr-004-two-tier-tests-with-acceptance-criteria-written-first) | Two-tier tests, acceptance criteria written first | Accepted |
 | [ADR-005](#adr-005-output-contracts-are-additive-only) | Output contracts are additive only | Accepted |
 | [ADR-006](#adr-006-trunk-based-development-with-conventional-commits) | Trunk-based development with Conventional Commits | Accepted |
-| [ADR-007](#adr-007-the-repository-is-an-agent-contract-enforced-by-tooling) | The repository is an agent contract, enforced by tooling | Accepted |
+| [ADR-007](#adr-007-the-repository-is-an-agent-contract-enforced-by-tooling) | The repository is an agent contract, enforced by tooling | Accepted (amended) |
+| [ADR-008](#adr-008-metrics-are-registered-python-functions-over-an-exported-fact-table) | Metrics are registered Python functions over an exported fact table | Accepted |
+| [ADR-009](#adr-009-the-python-standard-library-is-the-compute-engine-zero-runtime-dependencies) | The Python standard library is the compute engine; zero runtime dependencies | Accepted |
+| [ADR-010](#adr-010-no-metric-definition-language-no-mcp-server-no-semantic-layer) | No metric definition language, no MCP server, no semantic layer | Accepted |
+
+**On numbering.** Session 001 pre-assigned ADR numbers to decisions that had not been made
+(`OQ-07 → ADR-013`). That was a mistake: numbers are assigned when an ADR is *written*, and
+questions are not answered in ID order. OQ-07 was decided first and therefore holds ADR-008.
+Reserving numbers for unwritten decisions guarantees gaps and misleading cross-references.
 
 ---
 
@@ -338,6 +346,212 @@ on.
 
 ---
 
+---
+
+### ADR-008: Metrics are registered Python functions over an exported fact table
+
+**Date:** 2026-08-25 · **Status:** Accepted · **Resolves:** OQ-07
+
+**Context.** The brief asks for a foundation that business teams *and AI agents working on
+their behalf* can use autonomously to "extract metrics or extend with new functionality."
+That sentence contains two different requests, and conflating them is what makes the
+question feel unanswerable:
+
+| | The request | Who asks | What actually satisfies it |
+|---|---|---|---|
+| **Read path** | "What's the reversal rate for chain *saint* in March?" — a question the data answers but no metric emits | an analyst, or an agent for them | a queryable output artifact; nothing in the repo changes |
+| **Write path** | "From now on always emit reversal rate per chain per month" | whoever maintains the pipeline | a place to add a metric that requires no knowledge of ingestion |
+
+Answering both with one mechanism is what pushes people toward a server or a definition
+language. They are different problems and take different answers.
+
+**Decision.** Two surfaces, one per path, plus a generated catalog.
+
+**(A) Write path — metrics are plain Python functions, self-registering.** One metric per
+module in `src/hippo_pipeline/metrics/`, declared with a decorator:
+
+```python
+@metric(
+    name="pharmacy_ndc_summary",
+    question="Per pharmacy and drug: how many fills, at what revenue, at what unit price?",
+    grain=("npi", "ndc"),
+    measures={"avg_unit_price": "sum(price) / sum(quantity)"},
+)
+def pharmacy_ndc_summary(claims: Sequence[Claim]) -> Sequence[Row]:
+    ...
+```
+
+The registry is the entire framework. Adding a metric is **one module plus one unit test**;
+discovery, execution, export and documentation follow from registration.
+
+A metric receives an immutable, already-validated, already-revert-resolved dataset and
+returns rows. It performs no IO, opens no files, and never sees a raw record.
+
+**(B) Read path — every run writes a flat, self-describing export to `out/`:** the cleaned
+fact table, one file per metric, and the quarantine table carrying each rejected record with
+its reason. CSV and JSON only — the reader is not made to install anything. Any tool reads
+it: the DuckDB CLI, pandas, Excel, `jq`.
+
+**(C) `docs/METRICS.md` is generated from the registry**, and CI fails if it is out of date.
+A stale catalog is worse than no catalog; generating it plus a drift check makes staleness
+impossible rather than unlikely.
+
+**Consequences.**
+
+- The metric signature is a contract. Changing it is an ADR, not a refactor.
+- The registry is the only dynamic behaviour in the codebase, so it must be import-order
+  independent: metrics execute and export sorted by name, or output is not byte-identical
+  (charter §1.3.4).
+- `question=` is mandatory and `@metric` raises at import time when it is empty. A metric
+  without a stated business question is decoration, and this is the cheapest possible place
+  to enforce that.
+- Any measure with more than one defensible definition — unit price above all, see OQ-08 —
+  must carry its formula in `measures=`. The formula then appears in `METRICS.md` and beside
+  the column in the export, so the definition travels with the number instead of living in a
+  reviewer's memory.
+- Adding a metric touches neither `gateway/` nor `domain/`. Guaranteed by ADR-003's lint plus
+  the fact that metrics only ever receive domain objects.
+- **The honest cost:** an agent extending this writes Python and runs the test suite. That is
+  not a lower bar than a declaration language — it is a better one. The failure mode of a
+  wrong function is a failing test; the failure mode of a wrong declaration is a plausible
+  number nobody questions.
+
+**Alternatives considered.**
+
+| Option | What the extender must know | What we must build | Verdict |
+|---|---|---|---|
+| Ad-hoc functions, no registry | Python, the repo, and which function the runner calls | nothing | Rejected — no catalog, no discovery; the runner drifts from the functions |
+| **Registered functions (chosen)** | Python and the `@metric` contract | ~20 lines | **Accepted** |
+| **Exported artifact (chosen, complementary)** | SQL, or Excel | a writer | **Accepted** — answers the read path with no repo access at all |
+| SQL views over a materialised table | SQL | an engine, plus SQL testing discipline | Rejected — requires a compute engine chosen *because* of this decision, which is circular; see ADR-009 |
+| Declarative YAML/dataclass metric DSL | our invented schema | a language, an interpreter, its docs and its escape hatches | Rejected — see ADR-010 |
+| MCP server exposing metrics as tools | all of the above, plus running a server | a server | Rejected — see ADR-010 |
+
+Parquet was considered for the export and rejected: it needs `pyarrow`, which contradicts
+ADR-009, and CSV plus JSON is readable by strictly more tools. Parquet is the obvious first
+upgrade the day volume makes CSV painful, and it changes one writer.
+
+---
+
+### ADR-009: The Python standard library is the compute engine; zero runtime dependencies
+
+**Date:** 2026-08-25 · **Status:** Accepted · **Resolves:** OQ-01 · **Depends on:** ADR-008
+
+**Context.** OQ-01 was evaluated with the requirements-first method (playbook §1.2) and the
+evaluation is committed and reproducible at
+[`docs/spikes/oq-01-compute-engine/`](spikes/oq-01-compute-engine/README.md). Measured, not
+assumed:
+
+- A pure-stdlib streaming pass over all 27,076 records takes **69 ms** at 391k records/sec in
+  39 MB. Throughput does not select the engine, and never did.
+- pandas types `npi` as `int64` by default and turns `'0987654321'` into `987654321`.
+- Polars' lazy path (`scan_ndjson`) cannot read JSON *array* files at all, and `read_json`
+  loses an entire file to one non-object element.
+- DuckDB satisfies every requirement natively and was the spike's leading recommendation —
+  **explicitly conditional on OQ-07 landing on SQL.**
+
+ADR-008 resolved OQ-07 to Python functions plus a flat export. DuckDB's decisive advantage,
+SQL as the metric surface, no longer applies. What remained were per-record rejection with
+reasons (natural in Python), larger-than-memory aggregation (not demonstrated — the whole
+dataset aggregates in 39 MB), and throughput (not binding).
+
+This is the sequencing correction from session 002 paying for itself: deciding the engine
+first would have produced a different and worse answer.
+
+**Decision.** The pipeline is implemented against the Python standard library only.
+`[project] dependencies` in `pyproject.toml` stays empty, permanently, until an ADR
+supersedes this one. Third-party packages remain permitted in the dev dependency group
+(test, lint, type-check) and in spikes run under `uv run --with` — never in
+`src/hippo_pipeline/`.
+
+**Consequences.**
+
+- `git clone && make setup && make run` installs nothing at runtime. For a deliverable
+  somebody else has to run, that is the single strongest signal available.
+- We own every line, and must test every line: reading, validation, the anti-join, the
+  group-by, the writers. Deliberately accepted, and bounded — the whole pipeline is a few
+  hundred lines. It also satisfies the brief's "you should be able to explain any part of
+  it": there is no library behaviour to explain, only code.
+- **Money uses `decimal.Decimal`, never `float`.** Float summation is order-dependent, which
+  breaks byte-identical output. Prices are parsed from their string form so the value never
+  round-trips through a float.
+- Memory ceiling is O(reverted claim ids + output groups), not O(claims): files are read one
+  at a time and only aggregate state is retained.
+- **Known limitation, stated rather than discovered later:** `json.load` reads a whole file
+  into memory, so the pipeline streams *across* files but not *within* one. Today the largest
+  input file is 157 KB. A single file too large to hold is the first hard constraint that
+  breaks this decision, and the stdlib has no good incremental JSON-array reader — that day
+  needs a dependency, and therefore a new ADR.
+- Enforced mechanically: `scripts/lint_architecture.py` gains a rule rejecting any non-stdlib
+  import under `src/hippo_pipeline/`. Adding a runtime dependency now fails `make lint` and
+  CI. A rule with no enforcement is followed until the first deadline (ADR-007).
+- Reversal is cheap and scoped: the spike is committed, so re-deciding costs a reading, not a
+  re-evaluation. By ADR-003 the rewrite lands in `gateway/`; nothing outside it changes.
+
+**Alternatives considered.**
+
+| Option | Complexity | Cost to reviewer | Where it fails here |
+|---|---|---|---|
+| **stdlib (chosen)** | Medium — we write the joins and the group-by | **Zero** | Whole-file JSON reads; no free spill-to-disk |
+| DuckDB | Low — SQL does the work | One dependency | Its winning argument was SQL as the metric surface; ADR-008 removed it. Logic in SQL strings is logic outside mypy and ruff |
+| Polars | Medium | One dependency | Lazy path cannot read JSON arrays; one bad record loses a file. Needs a Python pre-pass, after which the stdlib ingest already exists |
+| pandas | Low | One dependency | Silently corrupts leading-zero identifiers by default; eager and memory-hungry |
+| PySpark | High | JVM + cluster mental model | Justified by no measurement here; hostile test loop for a 69 ms workload |
+
+The risk this decision carries — that a reviewer reads "stdlib" as unfamiliarity with the
+ecosystem — is answered by the spike being in the repository. Evaluating four engines against
+measured failure modes and choosing the simplest for stated reasons is a stronger signal than
+reaching for the fashionable one.
+
+---
+
+### ADR-010: No metric definition language, no MCP server, no semantic layer
+
+**Date:** 2026-08-25 · **Status:** Accepted · **Relates to:** ADR-008
+
+**Context.** Both were live candidates for OQ-07, and both are what a reader might expect
+given the brief names AI agents explicitly. Recording *why they were rejected* is worth more
+than the rejection, because the same debate will otherwise recur the first time someone says
+"shouldn't this expose an MCP server?"
+
+**Decision.** We will not build (a) a declarative metric definition language, (b) an MCP
+server or any other RPC surface over the metrics, or (c) a semantic layer / metrics store.
+
+**Consequences.**
+
+- **Against a DSL:** it is a language you invent, version, document and debug. Every metric
+  that does not fit the schema produces an escape hatch, and escape hatches are how
+  definition languages die. It also creates a second execution path exercised only by its own
+  tests — AP-11 in the playbook, built deliberately rather than by accident. The `@metric`
+  decorator gives the declarative *metadata* a DSL is usually wanted for, with none of the
+  interpreter.
+- **Against an MCP server:** a server wrapping a fixed set of metrics demonstrates nothing
+  about extensibility — it is transport over whatever sits underneath. It also cannot be run
+  by a reviewer without configuration, so it adds surface without adding evidence.
+- **Against a semantic layer:** it is the correct answer at an organisation's scale, where
+  many teams disagree about what "revenue" means. Here there is one pipeline and one
+  definition per measure, already carried in `measures=`.
+- All three would be built before a single consumer exists. The mechanism is provisional
+  until measured against real use (playbook §4.5, generalised).
+
+**Reversal conditions — the point of writing this down.**
+
+- **MCP becomes right** when there is a live consumer that cannot run Python — an agent in
+  someone else's runtime. It would then wrap the registry, which already holds exactly the
+  metadata a tool schema needs: name, question, grain, columns, measure formulas. ADR-008's
+  registry is shaped so this addition is additive and small, which is the responsible way to
+  reject a feature.
+- **A DSL becomes right** when non-engineers author metrics fast enough that PR review is the
+  bottleneck. Not at five metrics. Plausibly at fifty.
+- **A semantic layer becomes right** when a second pipeline computes an overlapping measure
+  and the two disagree.
+
+**Alternatives considered.** Building either "because the brief mentions AI agents" — rejected.
+The brief asks for a foundation agents can use, and asks to see the trade-offs that were
+weighed. A documented rejection with named reversal conditions answers both; a half-built
+server answers neither.
+
+
 ## 4. Open Questions
 
 Every one of these is a decision **not yet made**. Recording them as questions rather
@@ -353,37 +567,45 @@ decided, and it changes as evidence arrives.
 
 | # | Decide | Why it comes here |
 |---|---|---|
-| 1 | **OQ-07** — the agent/analyst extension surface | It dominates OQ-01. If metrics are Python functions, the zero-dependency option wins; if they are SQL over a published artifact, an engine that speaks SQL wins. Deciding the engine first would settle OQ-07 by accident. |
-| 2 | **OQ-01** — compute engine | Evidence already gathered: `docs/spikes/oq-01-compute-engine/`. Becomes a short decision once OQ-07 is fixed. |
-| 3 | **OQ-02** — malformed-record policy | Its implementation depends on what the engine can express per record. |
-| 4 | **OQ-03, OQ-04, OQ-10, OQ-11** — revert and reference-data semantics | Pure domain rules. Independent of the engine, and the highest-risk correctness decisions in the project. |
-| 5 | **OQ-05, OQ-09** — output format, idempotency and late arrivals | Shaped by 1–4. |
-| 6 | **OQ-06, OQ-08** — the metric set and how unit price is defined | Cheapest to change; decided last, once the surface exists to express them on. |
-| 7 | **OQ-12** — deployment and ownership model | Prose in the README, written once the system it describes exists. |
+| ~~1~~ | ~~**OQ-07** — the extension surface~~ | **Resolved by ADR-008 + ADR-010** (session 003). It dominated OQ-01, which is why it went first. |
+| ~~2~~ | ~~**OQ-01** — compute engine~~ | **Resolved by ADR-009** (session 003). Took ten minutes once OQ-07 was fixed, and landed on the opposite answer from the spike's provisional lean — which is the sequencing correction paying for itself. |
+| **1** | **OQ-02** — malformed-record policy | Next. Now a small decision: ADR-009 means it is plain Python, and ADR-008 fixed where rejects are exported. What remains is the policy itself — drop, fail, or quarantine — and the shape of the reason. |
+| **2** | **OQ-03, OQ-04, OQ-10, OQ-11** — revert and reference-data semantics | Pure domain rules, independent of every decision above, and the highest-risk correctness decisions in the project. |
+| **3** | **OQ-05, OQ-09** — output format, idempotency, late arrivals | Partly constrained by ADR-008 (CSV + JSON to `out/`); what remains is idempotency and late-arriving reverts. |
+| **4** | **OQ-06, OQ-08** — the metric set and the unit-price definition | Cheapest to change, and ADR-008 gives them a place to live. |
+| **5** | **OQ-12** — deployment and ownership model | Prose in the README, written once the system it describes exists. |
 
 > **Correction (session 002).** Session 001 recorded OQ-01 as the next action. That was
 > the wrong order: the engine choice is downstream of the extension surface, not upstream
 > of it. Recorded here rather than silently re-sequenced — a sequencing mistake is worth
 > as much to a future reader as the decision itself.
+>
+> **Outcome (session 003).** The reorder changed the answer. With OQ-07 resolved to Python
+> functions, the spike's leading recommendation (DuckDB) lost its decisive argument and
+> OQ-01 landed on the standard library instead. Had OQ-01 been decided first, the engine
+> would have chosen the extension surface by default.
+
+Numbers are **not** reserved for unwritten ADRs — see the note under the ADR index. The
+"Blocks" column names the code that cannot be written, not a future ADR number.
 
 | ID | Question | Blocks | Status |
 |---|---|---|---|
-| OQ-01 | Which compute engine? | ADR-008, all of `gateway/` | Open |
-| OQ-02 | What happens to a malformed record? | ADR-009, ingestion | Open |
-| OQ-03 | What exactly does a revert invalidate? | ADR-010, every metric | Open |
-| OQ-04 | Is a revert `id` an identity? How are repeats handled? | ADR-010 | Open |
-| OQ-05 | Output format and destination? | ADR-011, §2.5 | Open |
-| OQ-06 | Which metrics beyond the required set? | ADR-012, `metrics/` | Open |
-| OQ-07 | How do agents extend this without reading ingestion code? | ADR-013 | Open |
-| OQ-08 | How is unit price defined? | ADR-012 | Open |
-| OQ-09 | Are re-runs idempotent? What about late-arriving files? | ADR-011 | Open |
-| OQ-10 | What do the naive timestamps mean? | ADR-010 | Open |
-| OQ-11 | Is pharmacy reference data point-in-time or current-state? | ADR-010 | Open |
-| OQ-12 | Deployment, orchestration and team ownership model? | ADR-014 | Open |
+| OQ-01 | Which compute engine? | all of `gateway/` | **Resolved — ADR-009** |
+| OQ-02 | What happens to a malformed record? | ingestion, the quarantine export | Open — *next* |
+| OQ-03 | What exactly does a revert invalidate? | every metric | Open |
+| OQ-04 | Is a revert `id` an identity? How are repeats handled? | revert resolution | Open |
+| OQ-05 | Output format and destination? | the writers | Partly resolved — ADR-008 fixes CSV + JSON to `out/`; idempotency remains |
+| OQ-06 | Which metrics beyond the required set? | `metrics/` | Open |
+| OQ-07 | How do agents extend this without reading ingestion code? | the whole shape of `metrics/` | **Resolved — ADR-008, ADR-010** |
+| OQ-08 | How is unit price defined? | `metrics/` | Open |
+| OQ-09 | Are re-runs idempotent? What about late-arriving files? | the runner | Open |
+| OQ-10 | What do the naive timestamps mean? | any time-bucketed metric | Open |
+| OQ-11 | Is pharmacy reference data point-in-time or current-state? | the pharmacy join | Open |
+| OQ-12 | Deployment, orchestration and team ownership model? | README prose only | Open |
 
 ---
 
-**OQ-01 — Which compute engine?**
+**OQ-01 — Which compute engine?** — **RESOLVED by [ADR-009](#adr-009-the-python-standard-library-is-the-compute-engine-zero-runtime-dependencies): the Python standard library, zero runtime dependencies.** Retained below as the record of what the question was.
 27,074 claims is trivially small; the design question is what the pipeline must survive
 when a real month arrives. Candidates: pure stdlib streaming (zero dependencies, total
 control, most code to write); Polars (lazy execution, excellent single-node scaling,
@@ -392,14 +614,15 @@ OQ-07, since SQL is a surface agents already speak); PySpark (justifiable only a
 volume nothing here demonstrates). Decide with the requirements-first table in playbook
 §1.2, not by preference.
 
-**Evidence gathered — see [`docs/spikes/oq-01-compute-engine/`](spikes/oq-01-compute-engine/README.md).**
+**Evidence — see [`docs/spikes/oq-01-compute-engine/`](spikes/oq-01-compute-engine/README.md).**
 Measured, not assumed: a pure-stdlib pass over the whole dataset takes **69 ms** at
 391k records/sec, so throughput does not select the engine. pandas silently turns
 `'0987654321'` into `987654321`. Polars loses an entire file to one non-object record,
 and its lazy/streaming path cannot read JSON *array* files at all. DuckDB reads lists of
 directory globs in place, survives malformed records, and produces a per-record
 rejection reason in one pass. The spike's leading recommendation is DuckDB — **but it is
-explicitly conditional on OQ-07**, which is why OQ-07 is now decided first.
+explicitly conditional on OQ-07**, which is why OQ-07 was decided first. OQ-07 landed on
+Python functions (ADR-008), the condition failed, and ADR-009 chose the standard library.
 
 **OQ-02 — What happens to a malformed record?**
 The sample contains 2 claims missing `quantity` and 1 with `quantity == 0`. Options:
@@ -441,8 +664,11 @@ out of line" signal the brief describes); claim volume and revenue per chain; ti
 revert distribution. Each proposed metric needs a stated business question, or it is
 decoration.
 
-**OQ-07 — How do agents extend this without reading ingestion code?** — *next decision*
-The brief's real differentiator, and the question that determines OQ-01. Candidates: a declarative metric registry (YAML or
+**OQ-07 — How do agents extend this without reading ingestion code?** — **RESOLVED by [ADR-008](#adr-008-metrics-are-registered-python-functions-over-an-exported-fact-table) and [ADR-010](#adr-010-no-metric-definition-language-no-mcp-server-no-semantic-layer).**
+Answer: registered Python metric functions for the write path, a flat CSV/JSON export for
+the read path, a generated `docs/METRICS.md` as the catalog — and an explicit refusal to
+build a metric DSL, an MCP server or a semantic layer, with the conditions that would
+reverse each. Retained below as the record of what the question was. Candidates: a declarative metric registry (YAML or
 dataclasses) that the pipeline executes and that also generates documentation; a SQL
 semantic layer over a materialised table; an MCP server exposing metrics as tools. The
 test for any answer: *can a new metric be added by writing one declaration and one test,
@@ -493,11 +719,11 @@ says so and the Definition of Done in `CLAUDE.md` is satisfied.
 | ID | Feature | Spec file | Depends on | Status |
 |---|---|---|---|---|
 | F-00 | Repository foundation: layout, toolchain, hooks, PMA | — (this document) | — | **Done** (session 001) |
-| F-01 | Ingestion gateway: read pharmacies, claims, reverts; validate; quarantine | `feature-01-ingestion.md` | OQ-01, OQ-02 | Not specified |
+| F-01 | Ingestion gateway: read pharmacies, claims, reverts; validate; quarantine | `feature-01-ingestion.md` | ~~OQ-01~~, OQ-02 | Blocked on OQ-02 only |
 | F-02 | Domain model and revert resolution | `feature-02-revert-resolution.md` | OQ-03, OQ-04, OQ-10, OQ-11 | Not specified |
-| F-03 | Required metrics | `feature-03-required-metrics.md` | F-02, OQ-08 | Not specified |
-| F-04 | Proposed metrics and the metric registry | `feature-04-proposed-metrics.md` | F-03, OQ-06, OQ-07 | Not specified |
-| F-05 | Output serialization and run manifest | `feature-05-outputs.md` | OQ-05, OQ-09 | Not specified |
+| F-03 | Required metrics | `feature-03-required-metrics.md` | F-02, F-04, OQ-08 | Not specified |
+| F-04 | The metric registry (`@metric`, discovery, `METRICS.md` generation) | `feature-04-metric-registry.md` | ~~OQ-07~~ | **Ready to specify** — ADR-008 fixed its contract; depends on no open question |
+| F-05 | Output serialization and run manifest | `feature-05-outputs.md` | OQ-09 (format fixed by ADR-008) | Not specified |
 
 ---
 
