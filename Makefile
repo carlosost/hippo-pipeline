@@ -14,6 +14,7 @@ lint:  ## Ruff + architectural constraint lint (ADR-003)
 	uv run ruff format --check src tests
 	bash scripts/lint_architecture.sh
 	bash scripts/check_docs_commands.sh
+	bash scripts/check_fixture_integrity.sh
 
 typecheck:  ## mypy strict
 	uv run mypy

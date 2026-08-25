@@ -30,6 +30,8 @@ jobs:
         run: bash scripts/lint_architecture.sh
       - name: README / Makefile drift
         run: bash scripts/check_docs_commands.sh
+      - name: sample-data fixture integrity
+        run: bash scripts/check_fixture_integrity.sh
       - name: mypy strict
         run: uv run mypy
 

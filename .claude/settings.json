@@ -9,7 +9,8 @@
     "Hook 2: auto-run the matching unit test (playbook Pattern 2)",
     "Hook 3: YAML/JSON syntax validation     (playbook Pattern 3)",
     "Hook 4: Makefile <-> README contract    (playbook Pattern 4)",
-    "Hook 5: PMA freshness reminder          (project-specific, enforces 2.3)"
+    "Hook 5: PMA freshness reminder          (project-specific, enforces 2.3)",
+    "PreToolUse: blocks writes to data/sample-data before they happen - the one check that must gate rather than report (playbook 5.4)."
   ],
   "hooks": {
     "PostToolUse": [
@@ -40,6 +41,18 @@
             "type": "command",
             "command": "python3 scripts/hooks/pma_freshness.py",
             "statusMessage": "Checking Project Memory freshness..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 scripts/hooks/protect_fixture.py",
+            "statusMessage": "Checking the sample-data fixture is not being modified..."
           }
         ]
       }
