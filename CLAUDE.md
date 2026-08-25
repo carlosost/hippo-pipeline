@@ -17,8 +17,9 @@ in different directions:
 - **Correctness over cleverness.** Every number the pipeline emits must be traceable to
   the records that produced it. A metric nobody can audit is a metric nobody will trust.
 - **It must be a base others extend.** Business analysts and AI agents should be able to
-  add a metric without reading the ingestion code. That means the metric layer is
-  declarative and the IO layer is invisible to it.
+  add a metric without reading the ingestion code. Resolved by ADR-008: metrics are
+  registered Python functions over an exported fact table, and the IO layer is invisible
+  to them.
 
 ## 2. The working method (non-negotiable)
 
@@ -54,8 +55,19 @@ A change is done only when all of the following are true:
 
 ## 4. Hard constraints
 
-- **No runtime dependency may be added** until OQ-01 (compute engine) is resolved by an
-  ADR. `pyproject.toml` `dependencies` is empty on purpose.
+- **Zero runtime dependencies (ADR-009).** `src/hippo_pipeline/` imports the standard
+  library and nothing else. `pyproject.toml` `dependencies` stays empty. Third-party
+  packages are allowed in the dev group and in spikes run under `uv run --with`, never in
+  the package. Enforced by `scripts/lint_architecture.py`; adding one fails `make lint`.
+- **Money is `decimal.Decimal`, never `float` (ADR-009).** Float summation is
+  order-dependent and breaks byte-identical output. Parse prices from their string form so
+  the value never round-trips through a float.
+- **A metric is one module in `metrics/` plus one unit test (ADR-008).** It carries a
+  `@metric` decorator with a mandatory `question=`, receives already-validated,
+  already-revert-resolved domain objects, and performs no IO. Any measure with more than
+  one defensible definition states its formula in `measures=`.
+- **No metric DSL, no MCP server, no semantic layer (ADR-010).** If you think one is
+  needed, read ADR-010's reversal conditions first.
 - **Only `src/hippo_pipeline/gateway/` may touch the filesystem or parse raw bytes.**
   No `open()`, no `import json`/`csv`/`pathlib`/`glob` anywhere else. Everything
   downstream receives already-parsed domain objects. Enforced by

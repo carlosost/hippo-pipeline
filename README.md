@@ -10,13 +10,28 @@ Brief: [`docs/ASSIGNMENT.md`](docs/ASSIGNMENT.md).
 
 ## Status
 
-**Foundation only — the pipeline is not implemented yet.** This is deliberate, and it is
-the method, not a delay.
+**Specified, not yet implemented.** This is the method, not a delay: the decisions that
+determine the shape of every line of pipeline code are made, written down and
+conflict-checked before the first line is written.
 
-The three decisions that determine the shape of every line of pipeline code — the compute
-engine, the malformed-record policy, and what exactly a reversal invalidates — are
-recorded as **open questions** in [`docs/PROJECT_MEMORY.md`](docs/PROJECT_MEMORY.md), not
-guessed at in code. Writing ingestion before those are settled means writing it twice.
+Two of them are now settled, in [`docs/PROJECT_MEMORY.md`](docs/PROJECT_MEMORY.md):
+
+- **ADR-008 — how this gets extended.** A metric is one Python module plus one test,
+  registered by a `@metric` decorator that carries its business question, its grain and the
+  formula for any ambiguous measure. Every run also exports a flat CSV/JSON fact table, so
+  a question the pipeline does not answer can be asked of the output directly, with no
+  repo access. `docs/METRICS.md` is generated from the registry, so the catalog cannot go
+  stale.
+- **ADR-009 — what it runs on.** The Python standard library. **Zero runtime
+  dependencies.** Chosen after benchmarking DuckDB, Polars and pandas against the real
+  failure modes — the evaluation is committed at
+  [`docs/spikes/oq-01-compute-engine/`](docs/spikes/oq-01-compute-engine/README.md), and
+  ADR-009 names the conditions that would reverse it.
+- **ADR-010 — what this deliberately will not have:** no metric definition language, no
+  MCP server, no semantic layer, each with the conditions under which it becomes right.
+
+What remains open is the malformed-record policy and the revert semantics — the highest-risk
+correctness decisions in the project, and the reason no ingestion code exists yet.
 
 What exists today:
 

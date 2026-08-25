@@ -161,3 +161,63 @@ it. Two layers added, and ADR-007 amended to record them:
 
 Worth checking locally whether an editor has format-on-save active for JSON in this
 folder, or the same reformat will return.
+
+---
+
+## Session 003 — 2026-08-25 — OQ-07 and OQ-01 resolved; ADR-008, ADR-009, ADR-010
+
+**Goal.** Decide the extension surface, then the compute engine that follows from it.
+Spec session — no pipeline implementation.
+
+**Decisions.**
+
+| ADR | Decision |
+|---|---|
+| 008 | Metrics are registered Python functions (`@metric`) over an exported CSV/JSON fact table; `docs/METRICS.md` generated from the registry |
+| 009 | The Python standard library is the compute engine; zero runtime dependencies, permanently |
+| 010 | Negative: no metric definition language, no MCP server, no semantic layer — each with named reversal conditions |
+
+**The reorder paid for itself.** Session 002 moved OQ-07 ahead of OQ-01 on the argument
+that the engine choice is downstream of the extension surface. That turned out to be
+load-bearing rather than tidy: with metrics resolved to Python functions, DuckDB lost its
+decisive advantage — SQL as the metric surface — and OQ-01 landed on the **standard
+library**, the opposite of the spike's provisional lean. Deciding OQ-01 first would have
+let the engine choose the extension surface by default, which is exactly the "confident
+code satisfying an ambiguous spec" failure the playbook opens with.
+
+**ADR numbering corrected.** Session 001 pre-assigned ADR numbers to unwritten decisions
+(`OQ-07 → ADR-013`). Numbers are assigned when an ADR is *written*, and questions are not
+answered in ID order — so OQ-07, decided first, holds ADR-008. Reserving numbers for
+decisions not yet made guarantees gaps and misleading cross-references. The PMA now says
+so under the ADR index, and the "Blocks" column names the code that cannot be written
+rather than a future ADR number.
+
+**Enforcement added, per ADR-007's thesis.** An ADR nobody can violate accidentally is
+worth more than one everybody agrees with:
+
+- `scripts/lint_architecture.py` gained a fourth rule: no module under `src/hippo_pipeline/`
+  may import anything outside the standard library, checked against
+  `sys.stdlib_module_names`. A stray `import polars` now fails `make lint` and CI instead
+  of quietly becoming a dependency nobody decided on. The rule applies to `gateway/` too —
+  ADR-009 admits no exemption.
+- A fixture module importing `polars` and `duckdb` was added, and the linter's own tests
+  now assert both directions for all four rules.
+- `scripts/` is now linted by ruff. It had been excluded, which meant the architectural
+  linter — a merge gate with its own tests — was itself unlinted. `T20` and `ANN` are
+  ignored there because printing to stdout is those tools' interface.
+
+**What was deliberately NOT done.** No `metrics/` implementation, no `@metric` decorator,
+no registry. ADR-008 fixes the contract; F-04 implements it, in its own session, after its
+spec and Gherkin exist.
+
+**Verification.** `ruff check src tests scripts` clean, `ruff format --check` clean,
+architectural lint clean on the package and failing on the fixture for all four rules,
+fixture integrity OK, mypy strict clean over 11 files, 5/5 deterministic tests passing,
+`profile_sample_data.py` still runs.
+
+**Next action.** **OQ-02 — the malformed-record policy.** Now a small decision: ADR-009
+makes it plain Python and ADR-008 fixed where rejects are exported, so what remains is the
+policy (drop / fail the run / quarantine) and the shape of the reason record. The sample
+data gives three concrete cases to decide against — two claims missing `quantity` and one
+with `quantity == 0`, all three belonging to a *valid* pharmacy. Then **F-04**, the metric
+registry, which ADR-008 already unblocked and which depends on no open question.
