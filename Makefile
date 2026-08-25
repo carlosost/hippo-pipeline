@@ -10,8 +10,8 @@ setup:  ## Create .venv and install locked dependencies
 	uv sync --all-groups
 
 lint:  ## Ruff + architectural constraint lint (ADR-003)
-	uv run ruff check src tests
-	uv run ruff format --check src tests
+	uv run ruff check src tests scripts
+	uv run ruff format --check src tests scripts
 	bash scripts/lint_architecture.sh
 	bash scripts/check_docs_commands.sh
 	bash scripts/check_fixture_integrity.sh

@@ -22,7 +22,7 @@ try:
         timeout=5,
     ).stdout.split()
 except (OSError, subprocess.SubprocessError):
-    raise SystemExit(0)
+    raise SystemExit(0) from None
 
 src_touched = [f for f in changed if f.startswith("src/")]
 pma_touched = "docs/PROJECT_MEMORY.md" in changed

@@ -23,9 +23,9 @@ jobs:
           enable-cache: true
       - run: uv sync --all-groups
       - name: ruff
-        run: uv run ruff check src tests
+        run: uv run ruff check src tests scripts
       - name: ruff format
-        run: uv run ruff format --check src tests
+        run: uv run ruff format --check src tests scripts
       - name: architectural constraints (ADR-003)
         run: bash scripts/lint_architecture.sh
       - name: README / Makefile drift

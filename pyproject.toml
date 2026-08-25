@@ -10,9 +10,11 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Carlos Ost" }]
 
-# Runtime dependencies are intentionally EMPTY.
-# The compute engine is OQ-01 in docs/PROJECT_MEMORY.md and is not decided yet.
-# Adding a runtime dependency before that ADR exists is a spec violation.
+# Runtime dependencies are EMPTY, permanently, by ADR-009: the pipeline is implemented
+# against the standard library only. Adding one here requires an ADR that supersedes
+# ADR-009 - and scripts/lint_architecture.py will fail the build until it exists.
+# Third-party packages belong in the dev group below, or in a spike run via
+# `uv run --with <pkg>`, which leaves this manifest untouched.
 dependencies = []
 
 [project.scripts]
@@ -60,6 +62,10 @@ ignore = ["ANN401"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["ANN"]
+# scripts/ are developer CLI tools: printing to stdout IS their interface, and they are
+# not imported by the package. Everything else applies - the architectural linter is a
+# merge gate and has no business being unlinted.
+"scripts/*" = ["T20", "ANN"]
 
 # ------------------------------------------------------------------ mypy ----
 [tool.mypy]

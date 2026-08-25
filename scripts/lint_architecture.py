@@ -7,6 +7,9 @@ Rules
    ``open()``. Everything else receives already-parsed domain objects, which is what
    lets the domain and metrics layers be unit-tested with zero mocks.
 2. Only ``cli.py`` may call ``print()``. Everything else emits structured log records.
+3. **No module may import anything outside the standard library** (ADR-009). The
+   pipeline has zero runtime dependencies. A stray ``import polars`` now fails
+   ``make lint`` and CI rather than quietly becoming a dependency nobody decided on.
 
 Implemented over the AST rather than grep on purpose: a regex over Python source
 matches its own documentation, and a lint that cries wolf gets disabled within a week.
@@ -34,6 +37,19 @@ FORBIDDEN_IMPORTS = frozenset(
     {"json", "csv", "glob", "pathlib", "shutil", "tarfile", "gzip", "open"}
 )
 
+# ADR-009: zero runtime dependencies. sys.stdlib_module_names is exact for the running
+# interpreter (3.10+), which beats maintaining a hand-written allowlist that rots.
+FIRST_PARTY = frozenset({"hippo_pipeline"})
+
+
+def _is_third_party(root: str) -> bool:
+    return (
+        bool(root)
+        and root not in FIRST_PARTY
+        and root not in sys.stdlib_module_names
+        and not root.startswith("_")
+    )
+
 
 def _violations(path: Path, tree: ast.AST) -> list[str]:
     in_gateway = GATEWAY_ROOT in path.parents
@@ -57,18 +73,43 @@ def _violations(path: Path, tree: ast.AST) -> list[str]:
                         f"{path}:{node.lineno}: ADR-003 - 'from {node.module} import ...' "
                         f"outside gateway/; parse in the gateway, pass domain objects"
                     )
-            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                if node.func.id == "open":
-                    found.append(
-                        f"{path}:{node.lineno}: ADR-003 - open() outside gateway/; "
-                        f"the gateway owns every filesystem handle"
-                    )
-        if not is_cli and isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id == "print":
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "open"
+            ):
                 found.append(
-                    f"{path}:{node.lineno}: 4.1 - print() outside cli.py; "
-                    f"emit a structured log record instead"
+                    f"{path}:{node.lineno}: ADR-003 - open() outside gateway/; "
+                    f"the gateway owns every filesystem handle"
                 )
+        # Rule 3 applies everywhere, gateway/ included - ADR-009 admits no exemption.
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if _is_third_party(alias.name.split(".")[0]):
+                    found.append(
+                        f"{path}:{node.lineno}: ADR-009 - 'import {alias.name}' is not in "
+                        f"the standard library; this pipeline has zero runtime dependencies"
+                    )
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.level == 0
+            and _is_third_party((node.module or "").split(".")[0])
+        ):
+            found.append(
+                f"{path}:{node.lineno}: ADR-009 - 'from {node.module} import ...' is not "
+                f"in the standard library; this pipeline has zero runtime dependencies"
+            )
+
+        if (
+            not is_cli
+            and isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "print"
+        ):
+            found.append(
+                f"{path}:{node.lineno}: 4.1 - print() outside cli.py; "
+                f"emit a structured log record instead"
+            )
     return found
 
 
@@ -85,14 +126,10 @@ def main(argv: list[str]) -> int:
         CLI_MODULE = PACKAGE_ROOT / "cli.py"
         args = args[2:]
 
-    if args:
-        candidates = [Path(a).resolve() for a in args]
-    else:
-        candidates = sorted(PACKAGE_ROOT.rglob("*.py"))
+    candidates = [Path(a).resolve() for a in args] if args else sorted(PACKAGE_ROOT.rglob("*.py"))
 
     targets = [
-        p for p in candidates
-        if p.suffix == ".py" and PACKAGE_ROOT in p.parents and p.is_file()
+        p for p in candidates if p.suffix == ".py" and PACKAGE_ROOT in p.parents and p.is_file()
     ]
     if not targets:
         print("ARCH OK: no in-scope files to check")

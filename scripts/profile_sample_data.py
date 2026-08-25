@@ -65,7 +65,9 @@ def main(root: str = "data/sample-data") -> int:
             claim_problems[f"missing:{','.join(sorted(missing))}"] += 1
 
     quantities = collections.Counter(type(c["quantity"]).__name__ for c in valid)
-    non_positive_qty = [c for c in valid if isinstance(c["quantity"], (int, float)) and c["quantity"] <= 0]
+    non_positive_qty = [
+        c for c in valid if isinstance(c["quantity"], (int, float)) and c["quantity"] <= 0
+    ]
     claim_ids = collections.Counter(c["id"] for c in valid)
     unknown_npi = collections.Counter(c["npi"] for c in valid if c["npi"] not in npis)
     stamps = [dt.datetime.fromisoformat(c["timestamp"]) for c in valid]
@@ -73,10 +75,14 @@ def main(root: str = "data/sample-data") -> int:
     print(f"\nCLAIMS      files={claim_files}  schema-valid={len(valid)}")
     print(f"            anomalies={dict(claim_problems)}")
     print(f"            quantity python types={dict(quantities)}")
-    print(f"            quantity <= 0: {len(non_positive_qty)} (division-by-zero risk for unit price)")
+    print(
+        f"            quantity <= 0: {len(non_positive_qty)} (division-by-zero risk for unit price)"
+    )
     print(f"            duplicate claim ids: {sum(1 for v in claim_ids.values() if v > 1)}")
-    print(f"            claims for an npi absent from the pharmacy file: {sum(unknown_npi.values())}"
-          f" across {len(unknown_npi)} npis {dict(unknown_npi)}")
+    print(
+        f"            claims for an npi absent from the pharmacy file: "
+        f"{sum(unknown_npi.values())} across {len(unknown_npi)} npis {dict(unknown_npi)}"
+    )
     print(f"            distinct ndc={len({c['ndc'] for c in valid})}")
     print(f"            timestamp range {min(stamps)} .. {max(stamps)}  (all naive, no offset)")
 
@@ -88,18 +94,26 @@ def main(root: str = "data/sample-data") -> int:
     orphans = [r for r in rvalid if r["claim_id"] not in claim_ids]
     claim_by_id = {c["id"]: c for c in valid}
     out_of_order = [
-        r for r in rvalid
+        r
+        for r in rvalid
         if (c := claim_by_id.get(r["claim_id"]))
         and dt.datetime.fromisoformat(r["timestamp"]) < dt.datetime.fromisoformat(c["timestamp"])
     ]
     against_unknown_npi = [
-        r for r in rvalid
-        if (c := claim_by_id.get(r["claim_id"])) and c["npi"] not in npis
+        r for r in rvalid if (c := claim_by_id.get(r["claim_id"])) and c["npi"] not in npis
     ]
 
-    print(f"\nREVERTS     files={revert_files}  schema-valid={len(rvalid)}  anomalies={dict(revert_problems)}")
-    print(f"            repeated revert ids: {len(repeated_ids)} (same id, DIFFERENT timestamp - not exact duplicates)")
-    print(f"            claims reverted more than once: {sum(1 for v in by_claim.values() if v > 1)}")
+    print(
+        f"\nREVERTS     files={revert_files}  schema-valid={len(rvalid)}"
+        f"  anomalies={dict(revert_problems)}"
+    )
+    print(
+        f"            repeated revert ids: {len(repeated_ids)}"
+        f" (same id, DIFFERENT timestamp - not exact duplicates)"
+    )
+    print(
+        f"            claims reverted more than once: {sum(1 for v in by_claim.values() if v > 1)}"
+    )
     print(f"            reverts for an unknown claim_id: {len(orphans)}")
     print(f"            reverts timestamped BEFORE the claim they cancel: {len(out_of_order)}")
     print(f"            reverts against claims of an unknown npi: {len(against_unknown_npi)}")
@@ -118,8 +132,10 @@ def main(root: str = "data/sample-data") -> int:
             spread[c["ndc"]].append(c["price"] / q)
     for ndc, values in sorted(spread.items()):
         values.sort()
-        print(f"  {ndc}  n={len(values):5d}  min={values[0]:8.2f}  "
-              f"median={values[len(values) // 2]:8.2f}  max={values[-1]:8.2f}")
+        print(
+            f"  {ndc}  n={len(values):5d}  min={values[0]:8.2f}  "
+            f"median={values[len(values) // 2]:8.2f}  max={values[-1]:8.2f}"
+        )
 
     print("\nSchema-invalid claim records, verbatim:")
     for c in claims:

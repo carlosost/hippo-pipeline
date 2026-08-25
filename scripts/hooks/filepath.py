@@ -16,8 +16,10 @@ try:
 except (json.JSONDecodeError, ValueError):
     event = {}
 
-path = (event.get("tool_input") or {}).get("file_path") or (
-    event.get("tool_response") or {}
-).get("filePath") or ""
+path = (
+    (event.get("tool_input") or {}).get("file_path")
+    or (event.get("tool_response") or {}).get("filePath")
+    or ""
+)
 
 print(path)

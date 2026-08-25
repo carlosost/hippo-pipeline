@@ -32,6 +32,15 @@ def test_flags_every_rule_in_the_fixture_package():
     assert "print() outside cli.py" in result.stdout
 
 
+def test_flags_third_party_imports_adr_009():
+    """ADR-009 admits no exemption - the rule applies to gateway/ too."""
+    result = _run("--root", str(BAD_PACKAGE))
+
+    assert result.returncode == 1, result.stdout
+    assert "ADR-009 - 'import polars'" in result.stdout
+    assert "ADR-009 - 'from duckdb import ...'" in result.stdout
+
+
 def test_real_package_is_clean():
     result = _run()
 

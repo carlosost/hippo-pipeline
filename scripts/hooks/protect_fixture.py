@@ -20,7 +20,7 @@ PROTECTED = "data/sample-data"
 try:
     event = json.load(sys.stdin)
 except (json.JSONDecodeError, ValueError):
-    raise SystemExit(0)  # never block on an event we could not parse
+    raise SystemExit(0) from None  # never block on an event we could not parse
 
 path = (event.get("tool_input") or {}).get("file_path") or ""
 
