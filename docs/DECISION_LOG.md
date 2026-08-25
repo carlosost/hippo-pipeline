@@ -141,3 +141,23 @@ Python metric registry, SQL views over a published artifact, and an MCP server e
 metrics as tools. The acceptance test for any answer is fixed in the PMA: *can a new
 metric be added by writing one declaration and one test, touching no IO code?* Output is
 ADR-013 plus the revised text of OQ-01, which then becomes a short decision.
+
+### Session 002 addendum — the fixture drifted
+
+While committing, `git status` showed five `data/sample-data` files modified. Verified
+semantically identical — same records, same values, only re-indented — and the mtimes
+were later than the last commit, so an editor wrote them, not the pipeline. Restored
+byte-exact from HEAD.
+
+The interesting part is not the reformat, it is that `CLAUDE.md` already said the
+fixture is read-only and nothing enforced it. That is ADR-007's own thesis turned on
+itself: a convention living only in prose is followed until something automatic ignores
+it. Two layers added, and ADR-007 amended to record them:
+
+- `scripts/check_fixture_integrity.sh` fails `make lint` and CI on any drift, and prints
+  the restore command.
+- A `PreToolUse` hook blocks writes to `data/sample-data` before they land — the one
+  check that must gate rather than report.
+
+Worth checking locally whether an editor has format-on-save active for JSON in this
+folder, or the same reformat will return.

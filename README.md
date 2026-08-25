@@ -113,7 +113,8 @@ Spec-driven, following [`docs/GENERAL_ENGINEERING_PLAYBOOK.md`](docs/GENERAL_ENG
 read the Project Memory Asset → run a Conflict Check against every existing ADR → write
 the ADR and the Gherkin → write failing tests → implement → update the PMA in the same
 change. Sessions run in Claude Code with `.claude/settings.json` hooks that lint
-architecture, run the matching unit test, and flag a stale PMA on every file save.
+architecture, run the matching unit test, and flag a stale PMA on every file save — and
+one that blocks writes to `data/sample-data` outright.
 
 Those hooks fire only in the Claude Code CLI. Every check they run is also a `make`
 target and a CI job, so enforcement never depends on which interface was used.

@@ -300,7 +300,7 @@ branches; unnecessary weight for a single-deliverable pipeline.
 
 ### ADR-007: The repository is an agent contract, enforced by tooling
 
-**Date:** 2026-08-24 · **Status:** Accepted
+**Date:** 2026-08-24 · **Amended:** 2026-08-25 · **Status:** Accepted
 
 **Context.** Every rule in this document is worth exactly as much as its enforcement. A
 convention that lives only in prose is followed until the first deadline. This applies
@@ -318,6 +318,13 @@ reminded of.
 3. **`.claude/commands/`** — `/session-start`, `/conflict-check`, `/new-feature`,
    `/pre-merge`: the playbook's prompt templates as executable slash commands, so the
    process is invoked rather than remembered.
+
+**Amendment, 2026-08-25.** A fourth layer: one `PreToolUse` hook that **blocks** writes
+to `data/sample-data`, plus `scripts/check_fixture_integrity.sh` in `make lint` and CI.
+Added after five fixture files were found reformatted by an editor — identical content,
+different bytes. The rule already existed in `CLAUDE.md`; only the enforcement was
+missing, which is this ADR's own thesis turned on itself. Post-hooks report after the
+fact; a fixture has to be protected before the write lands (playbook §5.4).
 
 **Consequences.** Hooks fire **only in Claude Code CLI sessions** — not in Cowork, not on
 claude.ai. Enforcement therefore cannot live in hooks alone: every hook check is also a

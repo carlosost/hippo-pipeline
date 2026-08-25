@@ -86,9 +86,11 @@ A change is done only when all of the following are true:
 
 ## 6. Hooks
 
-`.claude/settings.json` defines five `PostToolUse` hooks: architectural lint, auto-run
+`.claude/settings.json` defines five `PostToolUse` hooks — architectural lint, auto-run
 of the matching unit test, config syntax validation, Makefile↔README drift, and a PMA
-freshness reminder.
+freshness reminder — plus one `PreToolUse` gate that **blocks** writes to
+`data/sample-data`. Post hooks report after the fact; the fixture is the one thing that
+has to be protected before the write lands.
 
 **They fire only in Claude Code CLI sessions.** In Cowork, claude.ai, or any other
 interface nothing runs automatically — run `make check` yourself. CI runs all of it
