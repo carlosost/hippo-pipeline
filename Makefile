@@ -15,6 +15,7 @@ lint:  ## Ruff + architectural constraint lint (ADR-003)
 	bash scripts/lint_architecture.sh
 	bash scripts/check_docs_commands.sh
 	bash scripts/check_fixture_integrity.sh
+	uv run python scripts/check_gherkin.py
 
 typecheck:  ## mypy strict
 	uv run mypy
@@ -23,7 +24,10 @@ test-unit:  ## Deterministic tier - must be 100%, no IO, no network (ADR-004)
 	uv run pytest tests/unit -m "not system"
 
 test-bdd:  ## Gherkin acceptance scenarios (ADR-004)
-	uv run pytest tests/bdd -m "not system"
+	@uv run pytest tests/bdd -m "not system"; s=$$?; \
+	if [ $$s -eq 5 ]; then \
+	  echo "no bdd tests yet - .feature files are specification until F-01/F-02/F-04 are implemented"; \
+	else exit $$s; fi
 
 test-system:  ## System-behavior tier - real files, baseline-gated, NOT a merge gate
 	uv run pytest tests/system -m system

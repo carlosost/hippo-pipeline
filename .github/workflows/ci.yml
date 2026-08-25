@@ -32,6 +32,8 @@ jobs:
         run: bash scripts/check_docs_commands.sh
       - name: sample-data fixture integrity
         run: bash scripts/check_fixture_integrity.sh
+      - name: gherkin feature files parse
+        run: uv run python scripts/check_gherkin.py
       - name: mypy strict
         run: uv run mypy
 
