@@ -8,7 +8,7 @@
 > Process: `docs/GENERAL_ENGINEERING_PLAYBOOK.md`. Agent contract: `CLAUDE.md`.
 > Session history: `docs/DECISION_LOG.md`.
 
-**Last updated:** 2026-08-25 (session 006) · **Phase:** F-01, F-02 and F-04 implemented; the pipeline runs end to end against the sample data
+**Last updated:** 2026-08-25 (session 007) · **Phase:** complete — four metrics ship, 16 ADRs, one open question (OQ-09) and two documentation items
 
 ---
 
@@ -165,6 +165,8 @@ Numbering is sequential and permanent. A superseded ADR keeps its number, is mar
 | [ADR-012](#adr-012-revert-resolution--a-claim-is-reverted-at-most-once-keyed-on-claim_id) | Revert resolution — a claim is reverted at most once, keyed on `claim_id` | Accepted |
 | [ADR-013](#adr-013-all-timestamps-are-interpreted-as-utc-and-the-assumption-is-published) | All timestamps are interpreted as UTC, and the assumption is published | Accepted |
 | [ADR-014](#adr-014-pharmacy-reference-data-is-current-state-not-point-in-time) | Pharmacy reference data is current-state, not point-in-time | Accepted |
+| [ADR-015](#adr-015-unit-price-is-quantity-weighted-by-default-and-every-metric-states-its-formula) | Unit price is quantity-weighted by default, and every metric states its formula | Accepted |
+| [ADR-016](#adr-016-the-exported-metric-set) | The exported metric set | Accepted |
 
 **On numbering.** Session 001 pre-assigned ADR numbers to decisions that had not been made
 (`OQ-07 → ADR-013`). That was a mistake: numbers are assigned when an ADR is *written*, and
@@ -859,6 +861,141 @@ claim in that run regardless of when the claim occurred, and is excluded per ADR
 | **Current-state (chosen)** | **Accepted** |
 
 
+---
+
+### ADR-015: Unit price is quantity-weighted by default, and every metric states its formula
+
+**Date:** 2026-08-25 · **Status:** Accepted · **Resolves:** OQ-08
+
+**Context.** `price` is the **total** charged for the fill, so unit price is derived — and
+there are two defensible derivations that give different answers:
+
+| Derivation | Answers | On this data |
+|---|---|---|
+| `sum(price) / sum(quantity)` | "what was actually paid per unit" | quantity-weighted; a 180-unit fill counts 180× a 1-unit fill |
+| `mean(price / quantity)` | "what did the average fill charge per unit" | every fill counts once, regardless of size |
+
+They are not close here. Unit price spans `0.30`–`884.60` **for every one of the ten
+NDCs** (§2.4), and quantities range from 1 to 180, so weighting changes the answer
+materially rather than marginally.
+
+**Decision.** The default is **`sum(price) / sum(quantity)`** — quantity-weighted. A PBM
+negotiates what is paid per unit dispensed, so the weighted figure is the one that maps to
+money changing hands.
+
+Any metric may use the other definition, and **must** then declare it in `measures=`. The
+formula appears in `docs/METRICS.md` and beside the column, so the definition travels with
+the number instead of living in a reviewer's memory.
+
+Two supporting rules:
+
+- **Reverted fills are excluded** from every price calculation. A reverted fill is treated
+  as though it never happened for revenue and volume (ADR-012), and a price nobody paid is
+  not a price.
+- **A group whose completed quantity is zero yields `null`, not zero and not a crash.** The
+  sample contains a claim with `quantity == 0`; it is rejected at ingest, but a metric must
+  not depend on that having happened.
+
+**Consequences.**
+
+- Rounding is explicit: money to 2 decimal places, unit price to 4, rates to 6, all
+  `ROUND_HALF_UP`. Unrounded division produces trailing digits that differ with operand
+  order and would break byte-identical output (charter §1.3.4).
+- Percentile method must also be stated, because there are several. These metrics use
+  nearest-rank on the sorted values, index `floor(n × q)` — declared per column.
+- The `measures=` field stops being documentation and becomes the contract: a reviewer
+  reading `avg_unit_price` knows which of the two definitions produced it without opening
+  the code.
+
+**Alternatives considered.**
+
+| Option | Verdict |
+|---|---|
+| `mean(price / quantity)` as the default | Rejected — treats a 1-unit fill and a 180-unit fill as equal evidence about price, which is not how money works |
+| Emit both, everywhere | Rejected — two columns whose difference nobody can explain is worse than one column whose definition is stated. A metric that genuinely needs the unweighted view declares it |
+| Leave it per-metric with no default | Rejected — the first two metrics would disagree by accident, and nobody would notice |
+
+---
+
+### ADR-016: The exported metric set
+
+**Date:** 2026-08-25 · **Status:** Accepted · **Resolves:** OQ-06
+
+**Context.** The brief asks us to *propose* useful metrics, and states what they are for:
+
+> *"Clean, trustworthy aggregates over claims and reversals let our business team spot
+> opportunities and problems — which pharmacies are performing well, which are
+> underperforming, and where prices are out of line."*
+
+That is three questions, and each proposed metric has to answer one of them or be cut.
+Candidates were measured against the sample data **before** being accepted — a metric that
+cannot distinguish anything in the data it was designed for is decoration with a schema.
+
+**Decision.** Four metrics ship. Each is one module in `src/hippo_pipeline/metrics/`.
+
+| Metric | Grain | The question it answers |
+|---|---|---|
+| `pharmacy_ndc_summary` | npi × ndc | The base fact table: fills, reversals, revenue and unit price for every pharmacy-drug pair |
+| `pharmacy_performance` | npi | Which pharmacies are underperforming — volume, revenue and reversal rate **with a confidence bound** |
+| `drug_price_dispersion` | ndc | Where prices are out of line — the spread of unit price within a single drug |
+| `chain_ndc_price_rank` | ndc × chain | Which chain is cheapest for a given drug — the PBM's core job |
+
+**`pharmacy_performance` carries `reversal_rate_lower_95`, not just `reversal_rate`.** This
+is the decision inside the decision. Measured on the sample:
+
+```
+raw reversal rate      0.008451 .. 0.016181   (17 pharmacies, ~700-3250 claims each)
+Wilson 95% lower bound 0.003879 .. 0.010499   - the intervals overlap heavily
+```
+
+Ranking by the raw rate would put a pharmacy with 20 reversals in 1,236 fills at the top of
+an "operational problem" list. The Wilson lower bound says plainly that **no pharmacy in
+this sample is a statistical outlier**. A metric that invites the business to act on noise
+is worse than no metric, and the bound is ten lines.
+
+**`drug_price_dispersion` reports p25 / median / p75, not just min and max.** Measured: the
+minimum is `0.30` and the maximum `884.60` for **all ten** drugs — a max/min ratio of
+exactly `2948.6667` in every case. Min and max therefore distinguish nothing here. The
+quartiles do: medians fall into three bands (`2.1`, `2.9`, `676.1`). Min and max are still
+emitted, with the ratio, because on real data they matter — but the metric leads with the
+figures that carry signal.
+
+**Consequences.**
+
+- Four metric modules, four unit-test files, four entries generated into `docs/METRICS.md`.
+  Adding a fifth costs the same as adding the fourth, which is ADR-008's claim made
+  demonstrable rather than asserted.
+- `pharmacy_performance` and `chain_ndc_price_rank` both need chain membership, which is why
+  ADR-008's amendment gave metrics the whole `Dataset` rather than a bare claim list. That
+  decision is now load-bearing.
+- The Wilson bound uses `Decimal.sqrt()` rather than `math.sqrt`, so rates stay in exact
+  decimal arithmetic and reruns are byte-identical without relying on platform float
+  behaviour.
+
+**Alternatives considered — and one rejection worth the space.**
+
+**`drug_common_quantity` (most frequently dispensed quantity per drug) — REJECTED.**
+It sounds useful and it is a standard anomaly-detection input. Measured on this data:
+
+```
+00002323401  9 distinct quantities  top '15' at 11.89%, runner-up '8.5' at 11.80%
+00015066812  9 distinct quantities  top '1'  at 12.70%, runner-up '45'  at 11.61%
+00031074998  9 distinct quantities  top '180.0' at 11.86%, runner-up '8.5' at 11.45%
+```
+
+Roughly nine quantities per drug, each around 11%. A "most common quantity" that beats its
+runner-up by half a percentage point is noise presented as a finding, and the next data
+refresh would reorder it. **Reversal condition:** ship it when the quantity distribution is
+actually concentrated — say when the modal quantity exceeds 30% of fills for most drugs.
+Until then the metric would manufacture confidence rather than measure anything.
+
+| Other candidate | Verdict |
+|---|---|
+| Time-to-revert distribution | Deferred, not rejected. Two reverts predate their claims (ADR-012) and the timestamps carry no offset (ADR-013), so the figure would need caveats larger than itself. Worth building once the source supplies real offsets |
+| Revenue per chain | Rejected as a metric, kept as a query. It is one `GROUP BY` over the exported fact table, and ADR-008 exists precisely so that questions like this need no code |
+| Claims per month | Deferred — depends on ADR-013's declared-UTC assumption in a way the others do not, since month boundaries move with the zone |
+
+
 ## 4. Open Questions
 
 Every one of these is a decision **not yet made**. Recording them as questions rather
@@ -880,8 +1017,8 @@ decided, and it changes as evidence arrives.
 | ~~4~~ | ~~**OQ-03, OQ-04, OQ-10, OQ-11**~~ | **Resolved by ADR-012, ADR-013, ADR-014** (session 004). |
 | ~~5~~ | ~~**F-01 + F-02 + F-04** — spec~~ | **Specified in session 005**: three feature files, 41 Gherkin scenarios, three Conflict Checks. |
 | ~~6~~ | ~~**F-01 + F-02 + F-04** — implementation~~ | **Done in session 006.** 115 deterministic tests, 7 system-tier, `make check` green, the sample data reproduces PMA §2.4 exactly. |
-| **1** | **OQ-06, OQ-08** — the metric set | Next. One reference metric ships and declares its own unit-price formula; what remains is which further metrics earn their place, each with a stated business question. |
-| **2** | **OQ-09** — idempotency and late-arriving reverts | The pipeline is full-recompute today and reruns are byte-identical (tested). This makes that a decision rather than an accident. |
+| ~~7~~ | ~~**OQ-06, OQ-08** — the metric set~~ | **Resolved by ADR-015 and ADR-016** (session 007). Four metrics ship; one candidate rejected with a measurement. |
+| **1** | **OQ-09** — idempotency and late-arriving reverts | The last open engineering question. The pipeline is full-recompute today and reruns are byte-identical (tested); this makes that a decision rather than an accident. |
 | **2** | **OQ-09** — idempotency and late-arriving reverts | The last genuinely open engineering question. ADR-014's "the reference file is an input" already leans full-recompute; this makes it explicit. |
 | **3** | **OQ-06, OQ-08** — the metric set and the unit-price definition | Cheapest to change, and ADR-008 gives them a place to live. Decided with F-03 and F-04 in hand. |
 | **4** | **OQ-12** — deployment and ownership model | Prose in the README, written once the system it describes exists. |
@@ -909,9 +1046,9 @@ Numbers are **not** reserved for unwritten ADRs — see the note under the ADR i
 | OQ-03 | What exactly does a revert invalidate? | every metric | **Resolved — ADR-012** |
 | OQ-04 | Is a revert `id` an identity? How are repeats handled? | revert resolution | **Resolved — ADR-012** (it is not) |
 | OQ-05 | Output format and destination? | the writers | **Resolved — ADR-008, ADR-011** (see §2.5) |
-| OQ-06 | Which metrics beyond the required set? | `metrics/` | Open |
+| OQ-06 | Which metrics beyond the required set? | `metrics/` | **Resolved — ADR-016** |
 | OQ-07 | How do agents extend this without reading ingestion code? | the whole shape of `metrics/` | **Resolved — ADR-008, ADR-010** |
-| OQ-08 | How is unit price defined? | `metrics/` | Open |
+| OQ-08 | How is unit price defined? | `metrics/` | **Resolved — ADR-015** |
 | OQ-09 | Are re-runs idempotent? What about late-arriving files? | the runner | Open — *last open engineering question* |
 | OQ-10 | What do the naive timestamps mean? | any time-bucketed metric | **Resolved — ADR-013** |
 | OQ-11 | Is pharmacy reference data point-in-time or current-state? | the pharmacy join | **Resolved — ADR-014** |
@@ -969,7 +1106,7 @@ DuckDB file is what an agent can query without any pipeline code at all. Not mut
 exclusive — the metric layer could emit one canonical form with thin serializers — but
 the canonical form must be chosen before anything is written.
 
-**OQ-06 — Which metrics beyond the required set?**
+**OQ-06 — Which metrics beyond the required set?** — **RESOLVED by [ADR-016](#adr-016-the-exported-metric-set): four ship, `drug_common_quantity` rejected with a measurement.** Retained below as the record of what the question was.
 The brief asks us to *propose* useful metrics. Grounded candidates from §2.4: reversal
 rate per pharmacy and per chain (with an explicit small-denominator rule — 1.14% overall
 means many pharmacies will have single-digit reversals); unit-price dispersion per NDC
@@ -988,7 +1125,7 @@ semantic layer over a materialised table; an MCP server exposing metrics as tool
 test for any answer: *can a new metric be added by writing one declaration and one test,
 touching no IO code?*
 
-**OQ-08 — How is unit price defined?**
+**OQ-08 — How is unit price defined?** — **RESOLVED by [ADR-015](#adr-015-unit-price-is-quantity-weighted-by-default-and-every-metric-states-its-formula): quantity-weighted by default, and every metric declares its own formula.** Retained below as the record of what the question was.
 `mean(price_i / quantity_i)` and `sum(price) / sum(quantity)` are different numbers, and
 with this dataset's dispersion (min `0.30`, max `884.60` for the same NDC) they differ
 materially. The second weights by quantity and is usually what "average price paid"
@@ -1035,7 +1172,7 @@ says so and the Definition of Done in `CLAUDE.md` is satisfied.
 | F-00 | Repository foundation: layout, toolchain, hooks, PMA | — (this document) | — | **Done** (session 001) |
 | F-01 | Ingestion gateway: read pharmacies, claims, reverts; validate; quarantine | `feature-01-ingestion.md` | ~~OQ-01~~, ~~OQ-02~~ | **Done** — 17 scenarios |
 | F-02 | Domain model and revert resolution | `feature-02-revert-resolution.md` | ~~OQ-03, OQ-04, OQ-10, OQ-11~~ | **Done** — 11 scenarios |
-| F-03 | Required metrics | `feature-03-required-metrics.md` | ~~F-02, F-04~~, OQ-06, OQ-08 | **Ready to specify** — one reference metric ships; the rest is OQ-06 |
+| F-03 | The exported metric set | `feature-03-metric-set.md` | ~~F-02, F-04, OQ-06, OQ-08~~ | **Done** — 4 metrics, 8 scenarios, figures asserted against an independent derivation |
 | F-04 | The metric registry (`@metric`, discovery, `METRICS.md` generation) | `feature-04-metric-registry.md` | ~~OQ-07~~, F-02 | **Done** — 13 scenarios. Shipped with F-01/F-02 and a real CLI caller (AP-11) |
 | F-05 | Output serialization and run manifest | `feature-05-outputs.md` | OQ-09 | **Done as part of F-01/F-04** — writers and `_manifest.json` ship; only OQ-09's idempotency question remains |
 

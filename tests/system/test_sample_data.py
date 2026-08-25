@@ -128,3 +128,70 @@ def test_reruns_are_byte_identical(tmp_path):
         "_excluded_reverts.csv",
     ):
         assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes(), name
+
+
+# ---------------------------------------------------------------- the metric set --
+# Every figure below was derived independently of the implementation, by re-reading the
+# raw files and re-applying the rules from ADR-011/012 in a throwaway script. Asserting
+# against numbers the code produced would test that the code agrees with itself.
+
+
+def test_pharmacy_performance_matches_the_independent_derivation(run_output):
+    rows = json.loads((run_output / "pharmacy_performance.json").read_text())
+
+    assert len(rows) == 17
+    row = next(r for r in rows if r["npi"] == "4444444444")
+    assert (row["claims"], row["reverted"]) == (1236, 20)
+    assert row["reversal_rate"] == "0.016181"
+    assert row["reversal_rate_lower_95"] == "0.010499"
+
+
+def test_no_pharmacy_is_a_statistical_outlier_in_this_sample(run_output):
+    """The reason the bound is exported at all (ADR-016). If this ever fails, the data
+    changed and somebody should look - not the code."""
+    rows = json.loads((run_output / "pharmacy_performance.json").read_text())
+
+    rates = sorted(float(r["reversal_rate"]) for r in rows)
+    bounds = sorted(float(r["reversal_rate_lower_95"]) for r in rows)
+
+    assert rates[0] == pytest.approx(0.008451, abs=1e-6)
+    assert rates[-1] == pytest.approx(0.016181, abs=1e-6)
+    # The highest lower bound sits below the lowest raw rate's neighbours: the intervals
+    # overlap, so no pharmacy is separated from the pack.
+    assert bounds[-1] < rates[-1]
+
+
+def test_price_dispersion_shows_min_and_max_are_degenerate_here(run_output):
+    rows = json.loads((run_output / "drug_price_dispersion.json").read_text())
+
+    assert len(rows) == 10
+    assert {r["max_over_min"] for r in rows} == {"2948.6667"}
+    # The medians are what carry signal - three bands across ten drugs.
+    assert len({r["median_unit_price"] for r in rows}) == 3
+
+
+def test_chain_price_ranking_matches_the_independent_derivation(run_output):
+    rows = json.loads((run_output / "chain_ndc_price_rank.json").read_text())
+
+    assert len(rows) == 30  # 10 drugs x 3 chains
+    drug = sorted((r for r in rows if r["ndc"] == "00054027225"), key=lambda r: r["price_rank"])
+    assert [(r["chain"], r["avg_unit_price"], r["fills"]) for r in drug] == [
+        ("doctor", "368.9120", 748),
+        ("health", "517.7575", 594),
+        ("saint", "647.4117", 1023),
+    ]
+
+
+def test_every_metric_writes_both_formats(run_output):
+    expected = {
+        "chain_ndc_price_rank",
+        "drug_price_dispersion",
+        "pharmacy_ndc_summary",
+        "pharmacy_performance",
+    }
+    for name in expected:
+        assert (run_output / f"{name}.csv").exists()
+        assert (run_output / f"{name}.json").exists()
+
+    manifest = json.loads((run_output / "_manifest.json").read_text())
+    assert set(manifest["metrics"]) == expected

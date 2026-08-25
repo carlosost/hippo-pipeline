@@ -21,8 +21,20 @@ read 27384  accepted 23296  rejected 3  excluded 4085 (+45 unlinkable reverts)
   missing_field:quantity: 2       non_positive:quantity: 1
 ```
 
-122 tests — 115 deterministic (71 unit + 44 acceptance scenarios) and 7 system-tier that
-pin those figures to the code that produces them. Zero runtime dependencies.
+Four metrics ship, and **161 tests** — 149 deterministic (97 unit + 52 acceptance
+scenarios) and 12 system-tier. Zero runtime dependencies.
+
+| Metric | Answers |
+|---|---|
+| `pharmacy_ndc_summary` | The base fact table: fills, reversals, revenue and unit price per pharmacy-drug pair |
+| `pharmacy_performance` | Which pharmacies are underperforming — with a Wilson 95% lower bound, because ranking on the raw rate puts 1-in-10 above 40-in-1000 |
+| `drug_price_dispersion` | Where prices are out of line — quantiles, because min and max are identical for all ten drugs in this data |
+| `chain_ndc_price_rank` | Which chain is cheapest for a given drug — the PBM's core job |
+
+Two metrics carry a judgement worth reading [ADR-016](docs/PROJECT_MEMORY.md) for, and one
+candidate — most-common-quantity — was **rejected with a measurement**: nine quantities per
+drug at roughly 11% each, so a modal quantity beating its runner-up by half a point is
+noise with a schema.
 
 Fourteen ADRs were written, conflict-checked and recorded **before** the first line of
 implementation. That ordering is the method, not ceremony: it is why the Conflict Check
@@ -30,8 +42,9 @@ caught, at spec time, that `json.load` converts numbers to `float` before any co
 wrap them in `Decimal` — a bug that would have produced correct-looking money that was
 quietly wrong.
 
-Still open: which further metrics earn their place (OQ-06, OQ-08), and whether re-runs
-should stay full-recompute (OQ-09).
+One open question remains: whether re-runs stay full-recompute (OQ-09). They are today,
+and reruns are byte-identical — the ADR would make that a decision rather than an
+accident.
 
 ## Quick start
 
@@ -53,7 +66,7 @@ Then look at `out/`:
 
 | File | What it holds |
 |---|---|
-| `pharmacy_ndc_summary.csv` / `.json` | fills, reversals, revenue and unit price per pharmacy and drug |
+| `pharmacy_ndc_summary.csv` / `.json` | one file per metric, in CSV and JSON |
 | `_rejected.csv` | the 3 records that violate the schema, each with machine-readable reason codes |
 | `_excluded.csv` | the 4,085 valid records for pharmacies outside the reference file |
 | `_excluded_reverts.csv` | the 45 reverts whose claim was never accepted |

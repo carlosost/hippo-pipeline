@@ -467,3 +467,72 @@ earn their place, each with a stated business question: reversal rate per pharma
 chain with an explicit small-denominator rule, unit-price dispersion per NDC, revenue per
 chain, time-to-revert distribution. Then OQ-09, which today is answered by accident —
 reruns are byte-identical and full-recompute — and should be answered on purpose.
+
+---
+
+## Session 007 — 2026-08-25 — The metric set: ADR-015 and ADR-016
+
+**Goal.** Answer OQ-08 (how unit price is defined) and OQ-06 (which metrics ship).
+
+**Method — and a deliberate deviation from §2.5.** The playbook splits spec and
+implementation across sessions so that tests specify rather than confirm. For
+aggregations that split is the weaker guard: a scenario written the day before can still
+be written to match whatever the function will compute. So the expected values were
+**derived independently first**, by a throwaway script that re-read the raw files and
+re-applied the rules of ADR-011 and ADR-012 without importing anything from
+`hippo_pipeline`. The system-tier tests assert those numbers. A figure produced by a
+different program cannot be quietly bent to match the implementation.
+
+Every one matched on the first run: 17 pharmacy rows, `4444444444` at 1,236 claims /
+20 reversals / rate `0.016181` / bound `0.010499`; 10 dispersion rows with an identical
+`2948.6667` ratio; 30 chain-drug rows with `00054027225` ranking doctor `368.9120`,
+health `517.7575`, saint `647.4117`.
+
+**ADR-015 — unit price is quantity-weighted.** `sum(price)/sum(quantity)`, not
+`mean(price/quantity)`. A PBM negotiates what is paid per unit dispensed, and with unit
+price spanning `0.30`–`884.60` for every drug and quantities from 1 to 180 the two
+definitions differ materially rather than marginally. Any metric may use the other
+definition and must then declare it in `measures=`, so the definition travels with the
+number.
+
+**ADR-016 — four metrics ship, and one candidate is rejected with a measurement.**
+
+The two judgement calls are the interesting part:
+
+- **Reversal rate ships with a Wilson 95% lower bound.** Raw rates span
+  `0.008451`–`0.016181`; the bounds span `0.003879`–`0.010499` and overlap heavily.
+  Ranking on the raw rate would put a pharmacy with 20 reversals in 1,236 fills at the top
+  of an "operational problem" list. The bound says plainly that **no pharmacy in this
+  sample is an outlier**, which is the honest answer. A metric that invites the business to
+  act on noise is worse than no metric.
+- **Dispersion leads with quantiles.** Minimum `0.30` and maximum `884.60` for all ten
+  drugs — a max/min ratio of exactly `2948.6667` every time. Min and max distinguish
+  nothing here; the medians fall into three bands and do. Both are still emitted, because
+  on real data min and max matter.
+
+**`drug_common_quantity` rejected.** Measured: nine distinct quantities per drug, each
+around 11% of fills, top beating runner-up by roughly half a percentage point. A "most
+common quantity" built on that is noise with a schema, and the next refresh would reorder
+it. The ADR records the reversal condition — ship it when the modal quantity exceeds ~30%
+of fills.
+
+**One implementation choice worth noting.** The Wilson bound uses `Decimal.sqrt()` rather
+than `math.sqrt`. A float in the middle of a figure the pipeline promises to reproduce
+byte for byte is a cross-platform risk for no benefit, and `Decimal` keeps the whole
+calculation in exact arithmetic.
+
+**What ADR-008's amendment bought.** Two of the four metrics need chain membership, which
+is why metrics receive the whole `Dataset` rather than a bare claim list. That decision,
+made three sessions ago on an argument about metrics that did not exist yet, is now
+load-bearing.
+
+**Verification.** `make check` green: 4 feature files / 49 scenarios parse, catalogue
+matches the registry, mypy strict over 40 files, 97 unit + 52 acceptance tests.
+`make test-system` green: 12 tests, every headline figure matching the independent
+derivation.
+
+**Next action.** **OQ-09 — idempotency and late-arriving reverts.** The last open
+engineering question. The pipeline is full-recompute today and reruns are byte-identical,
+proven by test — the ADR turns that from an accident into a decision, and states what
+happens when a revert arrives after the window it belongs to has already been aggregated.
+Then OQ-12, which is README prose about deployment and ownership, not code.
