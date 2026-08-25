@@ -8,7 +8,7 @@
 > Process: `docs/GENERAL_ENGINEERING_PLAYBOOK.md`. Agent contract: `CLAUDE.md`.
 > Session history: `docs/DECISION_LOG.md`.
 
-**Last updated:** 2026-08-25 (session 005, amended) · **Phase:** F-01, F-02 and F-04 specified with 41 Gherkin scenarios; implementation not started
+**Last updated:** 2026-08-25 (session 006) · **Phase:** F-01, F-02 and F-04 implemented; the pipeline runs end to end against the sample data
 
 ---
 
@@ -879,7 +879,9 @@ decided, and it changes as evidence arrives.
 | ~~3~~ | ~~**OQ-02** — malformed-record policy~~ | **Resolved by ADR-011** (session 003). Quarantine, with rejection and exclusion kept apart. |
 | ~~4~~ | ~~**OQ-03, OQ-04, OQ-10, OQ-11**~~ | **Resolved by ADR-012, ADR-013, ADR-014** (session 004). |
 | ~~5~~ | ~~**F-01 + F-02 + F-04** — spec~~ | **Specified in session 005**: three feature files, 41 Gherkin scenarios, three Conflict Checks. |
-| **1** | **F-01 + F-02 + F-04** — *implementation* | Next. Separate session from the spec, per playbook §2.5 — mixing them produces code that confirms the spec rather than testing it. Step definitions first, red, then the implementation. |
+| ~~6~~ | ~~**F-01 + F-02 + F-04** — implementation~~ | **Done in session 006.** 115 deterministic tests, 7 system-tier, `make check` green, the sample data reproduces PMA §2.4 exactly. |
+| **1** | **OQ-06, OQ-08** — the metric set | Next. One reference metric ships and declares its own unit-price formula; what remains is which further metrics earn their place, each with a stated business question. |
+| **2** | **OQ-09** — idempotency and late-arriving reverts | The pipeline is full-recompute today and reruns are byte-identical (tested). This makes that a decision rather than an accident. |
 | **2** | **OQ-09** — idempotency and late-arriving reverts | The last genuinely open engineering question. ADR-014's "the reference file is an input" already leans full-recompute; this makes it explicit. |
 | **3** | **OQ-06, OQ-08** — the metric set and the unit-price definition | Cheapest to change, and ADR-008 gives them a place to live. Decided with F-03 and F-04 in hand. |
 | **4** | **OQ-12** — deployment and ownership model | Prose in the README, written once the system it describes exists. |
@@ -1031,11 +1033,11 @@ says so and the Definition of Done in `CLAUDE.md` is satisfied.
 | ID | Feature | Spec file | Depends on | Status |
 |---|---|---|---|---|
 | F-00 | Repository foundation: layout, toolchain, hooks, PMA | — (this document) | — | **Done** (session 001) |
-| F-01 | Ingestion gateway: read pharmacies, claims, reverts; validate; quarantine | `feature-01-ingestion.md` | ~~OQ-01~~, ~~OQ-02~~ | **Specified** — 17 scenarios |
-| F-02 | Domain model and revert resolution | `feature-02-revert-resolution.md` | ~~OQ-03, OQ-04, OQ-10, OQ-11~~ | **Specified** — 11 scenarios |
-| F-03 | Required metrics | `feature-03-required-metrics.md` | F-02, F-04, OQ-08 | Blocked on F-02/F-04 |
-| F-04 | The metric registry (`@metric`, discovery, `METRICS.md` generation) | `feature-04-metric-registry.md` | ~~OQ-07~~, F-02 | **Specified** — 13 scenarios. Built with F-01/F-02, never alone (AP-11) |
-| F-05 | Output serialization and run manifest | `feature-05-outputs.md` | OQ-09 (format fixed by ADR-008/011) | Not specified |
+| F-01 | Ingestion gateway: read pharmacies, claims, reverts; validate; quarantine | `feature-01-ingestion.md` | ~~OQ-01~~, ~~OQ-02~~ | **Done** — 17 scenarios |
+| F-02 | Domain model and revert resolution | `feature-02-revert-resolution.md` | ~~OQ-03, OQ-04, OQ-10, OQ-11~~ | **Done** — 11 scenarios |
+| F-03 | Required metrics | `feature-03-required-metrics.md` | ~~F-02, F-04~~, OQ-06, OQ-08 | **Ready to specify** — one reference metric ships; the rest is OQ-06 |
+| F-04 | The metric registry (`@metric`, discovery, `METRICS.md` generation) | `feature-04-metric-registry.md` | ~~OQ-07~~, F-02 | **Done** — 13 scenarios. Shipped with F-01/F-02 and a real CLI caller (AP-11) |
+| F-05 | Output serialization and run manifest | `feature-05-outputs.md` | OQ-09 | **Done as part of F-01/F-04** — writers and `_manifest.json` ship; only OQ-09's idempotency question remains |
 
 ---
 

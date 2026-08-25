@@ -398,3 +398,72 @@ eval sets) is the right playbook for a different class of project;
 
 The README now carries a short "Why there is no LLM in here" section, because this is a
 question the deliverable should answer without the reader having to open the PMA.
+
+---
+
+## Session 006 — 2026-08-25 — F-01, F-02 and F-04 implemented
+
+**Goal.** Write the code. Separate session from the spec, per playbook §2.5: mixing them
+produces code that confirms the spec rather than testing it.
+
+**Result.** The pipeline runs end to end and reproduces PMA §2.4 exactly — 27,076 claims
+read, 22,988 accepted, 3 rejected, 4,085 excluded, 308 reverts, 260 linked, 3
+`duplicate_revert_for_claim`, 2 `revert_precedes_claim`, 45 `claim_not_accepted`, 0
+`claim_not_found`. 122 tests: 71 unit, 44 acceptance scenarios, 7 system-tier.
+
+**Three things the specification predicted, and one it did not.**
+
+1. **`json.load` converts numbers to `float` before any code sees them.** Caught by F-01's
+   Conflict Check at spec time. The fix — `json.loads(parse_float=Decimal,
+   parse_int=Decimal)` — has a test that would fail loudly with the naive
+   `Decimal(str(value))`: a price of `0.1` would otherwise arrive as
+   `0.1000000000000000055511151231257827`. This is the bug that would have produced
+   correct-looking money that was quietly wrong.
+2. **The metric writers belong in `gateway/`**, not beside the registry. Predicted, and
+   the code follows it.
+3. **Revert grouping emits in sorted order**, so the quarantine file is byte-stable.
+   Predicted; there is a test that resolves the same reverts in reversed input order and
+   asserts identical results.
+4. **Not predicted:** the architectural lint rejected `cli.py` importing `pathlib`. That
+   is the rule working rather than a false positive — path handling *is* IO handling — so
+   the writers now take strings and own `Path` themselves. The alternative, exempting
+   `cli.py`, would have put the first crack in the boundary.
+
+**Two design refinements, recorded rather than hidden.**
+
+- `resolve_reverts` takes `quarantined_claim_ids`, not the `accepted_claim_ids` the spec
+  named. The accepted set is derivable from `claims` and so carried no information; what
+  resolution cannot derive is which claims the *gateway* quarantined, which is exactly
+  what separates `claim_not_accepted` from `claim_not_found`. F-02's spec file records the
+  change beside the original.
+- Unlinkable reverts are returned as `ExcludedRevert`, not `QuarantinedRecord`. The domain
+  was about to build JSON by string concatenation to fill a `raw` field — which is
+  serialization, and serialization belongs to the gateway (ADR-003). The layer boundary
+  caught a design mistake before it was written.
+
+**Manifest accounting corrected mid-session.** The first version reported a single
+`excluded` count combining ingest exclusions with resolution exclusions, while `balances`
+asserted an identity over only the first. A number that no stated identity accounts for is
+precisely what this pipeline exists to avoid, so the manifest now reports
+`excluded_at_ingest` and `excluded_at_resolution` separately and states its identity
+inline.
+
+**AP-11 gate passed.** `grep -rn "run_all" src/ | grep -v tests` returns
+`cli.py:87: outputs = run_all(dataset)`. There is also an acceptance scenario asserting
+`cli.run_all is registry.run_all` — the same object, not a similar function.
+
+**Tooling.** The `make test-bdd` exit-5 guard was removed; it carried its own deletion
+condition and step definitions now exist. `discover()` and `check_catalog.sh` each gained
+one optional argument so the acceptance tests exercise the real mechanism against a
+throwaway package and a throwaway catalogue, rather than testing them by proxy.
+
+**Verification.** `make check` green: ruff, format, architectural lint (4 rules), doc
+drift, fixture integrity, Gherkin parse (41 scenarios), catalogue drift, mypy strict over
+31 files, 71 unit + 44 acceptance tests. `make test-system` green: 7 tests.
+
+**Next action.** **OQ-06 and OQ-08 — the metric set.** One reference metric ships and
+declares its own unit-price formula in `measures=`. What remains is which further metrics
+earn their place, each with a stated business question: reversal rate per pharmacy and per
+chain with an explicit small-denominator rule, unit-price dispersion per NDC, revenue per
+chain, time-to-revert distribution. Then OQ-09, which today is answered by accident —
+reruns are byte-identical and full-recompute — and should be answered on purpose.

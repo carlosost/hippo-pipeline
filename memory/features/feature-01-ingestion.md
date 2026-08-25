@@ -1,6 +1,6 @@
 # Feature 01 — Ingestion gateway and quarantine
 
-**Status:** Specified
+**Status:** Done
 **PMA feature ID:** F-01
 **ADRs this depends on:** ADR-003 (IO chokepoint), ADR-009 (stdlib, `Decimal`), ADR-011 (quarantine), ADR-013 (UTC), ADR-014 (current-state reference data)
 **Open questions required:** none — all resolved
@@ -123,9 +123,9 @@ parsing from the text. Recorded here so the implementation session does not redi
 
 ## Definition of Done
 
-- [ ] PMA updated in the same change as the code
-- [ ] All `ingestion.feature` scenarios pass
-- [ ] Unit tests cover every reason code and the `read == accepted + rejected + excluded` invariant
-- [ ] System-tier test asserts 27,076 accepted / 3 rejected / 4,085 excluded on the sample
-- [ ] `make check` output pasted into the session
-- [ ] This file marked `Status: Done`
+- [x] PMA updated in the same change as the code
+- [x] All `ingestion.feature` scenarios pass
+- [x] Unit tests cover every reason code and the `read == accepted + rejected + excluded` invariant
+- [x] System-tier test asserts 27,076 accepted / 3 rejected / 4,085 excluded on the sample
+- [x] `make check` output pasted into the session
+- [x] This file marked `Status: Done`

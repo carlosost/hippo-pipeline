@@ -10,62 +10,28 @@ Brief: [`docs/ASSIGNMENT.md`](docs/ASSIGNMENT.md).
 
 ## Status
 
-**Specified, not yet implemented.** This is the method, not a delay: the decisions that
-determine the shape of every line of pipeline code are made, written down and
-conflict-checked before the first line is written.
+**Working.** The pipeline runs end to end against the provided sample data, and every
+number it produces matches the profile recorded in
+[`docs/PROJECT_MEMORY.md` §2.4](docs/PROJECT_MEMORY.md):
 
-Two of them are now settled, in [`docs/PROJECT_MEMORY.md`](docs/PROJECT_MEMORY.md):
+```
+read 27384  accepted 23296  rejected 3  excluded 4085 (+45 unlinkable reverts)
+  claim_not_accepted: 45          npi_not_in_pharmacy_dataset: 4085
+  duplicate_revert_for_claim: 3   revert_precedes_claim: 2
+  missing_field:quantity: 2       non_positive:quantity: 1
+```
 
-- **ADR-008 — how this gets extended.** A metric is one Python module plus one test,
-  registered by a `@metric` decorator that carries its business question, its grain and the
-  formula for any ambiguous measure. Every run also exports a flat CSV/JSON fact table, so
-  a question the pipeline does not answer can be asked of the output directly, with no
-  repo access. `docs/METRICS.md` is generated from the registry, so the catalog cannot go
-  stale.
-- **ADR-009 — what it runs on.** The Python standard library. **Zero runtime
-  dependencies.** Chosen after benchmarking DuckDB, Polars and pandas against the real
-  failure modes — the evaluation is committed at
-  [`docs/spikes/oq-01-compute-engine/`](docs/spikes/oq-01-compute-engine/README.md), and
-  ADR-009 names the conditions that would reverse it.
-- **ADR-010 — what this deliberately will not have:** no metric definition language, no
-  MCP server, no semantic layer, each with the conditions under which it becomes right.
+122 tests — 115 deterministic (71 unit + 44 acceptance scenarios) and 7 system-tier that
+pin those figures to the code that produces them. Zero runtime dependencies.
 
-What remains open is the metric set itself and one idempotency question — everything that
-shapes the code is decided across 14 ADRs.
+Fourteen ADRs were written, conflict-checked and recorded **before** the first line of
+implementation. That ordering is the method, not ceremony: it is why the Conflict Check
+caught, at spec time, that `json.load` converts numbers to `float` before any code can
+wrap them in `Decimal` — a bug that would have produced correct-looking money that was
+quietly wrong.
 
-### Why there is no LLM in here
-
-The brief mentions AI agents, so it is worth being explicit: there is no LangChain, no
-LangGraph, no model call anywhere in this pipeline.
-
-The agent clause in the brief is about **consumption, not implementation** — agents should be
-able to use the output and extend the metric set, which is what ADR-008 provides. An agent
-*inside* the pipeline would make it worse: there is nothing to orchestrate (read → validate →
-resolve → aggregate → write is a straight line with no cycles and no inter-step state), and a
-non-deterministic component is incompatible with the requirement that identical inputs produce
-byte-identical outputs. For a system that computes revenue from pharmacy claims, that is
-disqualifying rather than a trade-off.
-
-Where an LLM does belong is *downstream* of `out/` — natural-language querying over the
-exported fact table, or explaining an anomaly in the metrics. Both are consumers of the
-output, not stages in it. ADR-010 records the reasoning and the conditions that would change
-it.
-
-What exists today:
-
-- The full engineering scaffold: layout, toolchain, two-tier test harness, CI, lint.
-- An architectural lint that is itself unit-tested, enforcing the IO chokepoint on every
-  file save.
-- A **profiled** sample dataset — 14 measured facts about the provided data, each one
-  either constraining the design or opening a question. Reproduce them with
-  `python3 scripts/profile_sample_data.py`.
-- A Project Memory Asset carrying 7 accepted ADRs and 12 open questions, with an
-  explicit **decision order** separate from ID order.
-- A committed, runnable spike for the compute-engine question —
-  [`docs/spikes/oq-01-compute-engine/`](docs/spikes/oq-01-compute-engine/README.md) —
-  so the ADR that follows cites measurements rather than opinion.
-
-Running the CLI today exits `2` and tells you which open questions block it.
+Still open: which further metrics earn their place (OQ-06, OQ-08), and whether re-runs
+should stay full-recompute (OQ-09).
 
 ## Quick start
 
@@ -74,9 +40,49 @@ Requires [uv](https://docs.astral.sh/uv/) and Python ≥3.10.
 ```bash
 git clone <this repo> && cd hippo
 make setup          # create .venv, install locked dependencies
-make check          # lint + typecheck + deterministic tests — the merge gate
-make run            # currently exits 2: scaffolding only
+make check          # lint + typecheck + 115 deterministic tests — the merge gate
+
+make run ARGS="run \
+  --pharmacies data/sample-data/pharmacies \
+  --claims     data/sample-data/claims \
+  --reverts    data/sample-data/reverts \
+  --out        out"
 ```
+
+Then look at `out/`:
+
+| File | What it holds |
+|---|---|
+| `pharmacy_ndc_summary.csv` / `.json` | fills, reversals, revenue and unit price per pharmacy and drug |
+| `_rejected.csv` | the 3 records that violate the schema, each with machine-readable reason codes |
+| `_excluded.csv` | the 4,085 valid records for pharmacies outside the reference file |
+| `_excluded_reverts.csv` | the 45 reverts whose claim was never accepted |
+| `_manifest.json` | every count, the reject rate, the time-basis assumption, and the identity `read == accepted + rejected + excluded` |
+
+`make run ARGS="metrics"` lists what each metric answers.
+`make run ARGS="catalog"` prints [`docs/METRICS.md`](docs/METRICS.md), which is generated
+from the registry — `make lint` fails if it has drifted.
+
+## Adding a metric
+
+One module and one test. No ingestion code, no configuration, no registration list:
+
+```python
+# src/hippo_pipeline/metrics/reversal_rate_by_chain.py
+@metric(
+    name="reversal_rate_by_chain",
+    question="Which chains reverse the most fills?",
+    grain=("chain",),
+    columns=("chain", "fills", "reverted", "rate"),
+    measures={"rate": "reverted / (fills + reverted)"},
+)
+def reversal_rate_by_chain(data: Dataset) -> Sequence[Mapping[str, object]]:
+    ...
+```
+
+Discovery, execution order, CSV/JSON export and the catalogue entry all follow from the
+decorator. `question` is mandatory and `@metric` raises at import time without it — a
+metric with no stated business question is decoration.
 
 Other targets:
 

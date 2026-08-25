@@ -1,6 +1,6 @@
 # Feature 04 — The metric registry
 
-**Status:** Specified
+**Status:** Done
 **PMA feature ID:** F-04
 **ADRs this depends on:** ADR-005 (additive contracts), ADR-008 (the extension surface), ADR-009 (stdlib), ADR-010 (no DSL), ADR-011 (a raising metric fails the run)
 **Open questions required:** none — all resolved
@@ -114,10 +114,10 @@ idempotent and independent of import order — hence execution sorted by name.
 
 ## Definition of Done
 
-- [ ] PMA updated in the same change as the code
-- [ ] All `metric_registry.feature` scenarios pass
-- [ ] Unit tests cover every row in the failure-policy table
-- [ ] `grep -rn "run_all" src/ | grep -v tests` shows a non-test caller (AP-11 gate)
-- [ ] `docs/METRICS.md` is generated, and its drift check runs in `make lint` and CI
-- [ ] `make check` output pasted into the session
-- [ ] This file marked `Status: Done`
+- [x] PMA updated in the same change as the code
+- [x] All `metric_registry.feature` scenarios pass
+- [x] Unit tests cover every row in the failure-policy table
+- [x] `grep -rn "run_all" src/ | grep -v tests` shows a non-test caller (AP-11 gate)
+- [x] `docs/METRICS.md` is generated, and its drift check runs in `make lint` and CI
+- [x] `make check` output pasted into the session
+- [x] This file marked `Status: Done`

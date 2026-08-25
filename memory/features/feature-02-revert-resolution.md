@@ -1,6 +1,6 @@
 # Feature 02 — Domain model and revert resolution
 
-**Status:** Specified
+**Status:** Done
 **PMA feature ID:** F-02
 **ADRs this depends on:** ADR-003 (pure domain layer), ADR-009 (`Decimal`), ADR-011 (quarantine), ADR-012 (revert resolution), ADR-013 (UTC), ADR-014 (current-state)
 **Open questions required:** none — all resolved
@@ -20,9 +20,15 @@ wrong number downstream, and nothing crashes.
 def resolve_reverts(
     claims: Sequence[Claim],
     reverts: Sequence[Revert],
-    accepted_claim_ids: AbstractSet[str],
+    quarantined_claim_ids: Set[str] = frozenset(),
 ) -> ResolutionResult: ...
 ```
+
+> **Refined during implementation.** The spec originally passed `accepted_claim_ids`.
+> That set is derivable from `claims`, so it carried no information; what resolution
+> actually cannot derive is which claims the gateway *quarantined*, which is what
+> separates `claim_not_accepted` from `claim_not_found`. Recorded here rather than left
+> as a spec that disagrees with the code.
 
 Pure. No IO, no clock, no randomness (ADR-003). `accepted_claim_ids` is passed in rather than
 derived from `claims`, because a revert may point at a claim that was rejected or excluded
@@ -127,10 +133,10 @@ quarantine file is byte-stable regardless.
 
 ## Definition of Done
 
-- [ ] PMA updated in the same change as the code
-- [ ] All `revert_resolution.feature` scenarios pass
-- [ ] Unit tests cover all six rules and both orphan causes separately
-- [ ] A test asserts resolution is pure: same inputs, same outputs, no clock
-- [ ] System-tier test reproduces the sample's 3 duplicates, 2 out-of-order, 0 not-found, 45 not-accepted
-- [ ] `make check` output pasted into the session
-- [ ] This file marked `Status: Done`
+- [x] PMA updated in the same change as the code
+- [x] All `revert_resolution.feature` scenarios pass
+- [x] Unit tests cover all six rules and both orphan causes separately
+- [x] A test asserts resolution is pure: same inputs, same outputs, no clock
+- [x] System-tier test reproduces the sample's 3 duplicates, 2 out-of-order, 0 not-found, 45 not-accepted
+- [x] `make check` output pasted into the session
+- [x] This file marked `Status: Done`
