@@ -5,7 +5,9 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-[ -f docs/METRICS.md ] || { echo "CATALOG MISSING: run 'make catalog'"; exit 1; }
+catalog="${1:-docs/METRICS.md}"
+
+[ -f "$catalog" ] || { echo "CATALOG MISSING: run 'make catalog'"; exit 1; }
 
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
@@ -14,12 +16,12 @@ if ! uv run hippo catalog > "$tmp" 2>/dev/null; then
   echo "SKIP: could not render the catalogue (run 'make setup')"; exit 0
 fi
 
-if ! diff -q docs/METRICS.md "$tmp" >/dev/null; then
-  echo "CATALOG DRIFT: docs/METRICS.md does not match the registry."
-  diff docs/METRICS.md "$tmp" | head -20 | sed 's/^/    /'
+if ! diff -q "$catalog" "$tmp" >/dev/null; then
+  echo "CATALOG DRIFT: $catalog does not match the registry."
+  diff "$catalog" "$tmp" | head -20 | sed 's/^/    /'
   echo
   echo "  Regenerate:  make catalog"
   exit 1
 fi
 
-echo "CATALOG OK: docs/METRICS.md matches the registry"
+echo "CATALOG OK: $catalog matches the registry"

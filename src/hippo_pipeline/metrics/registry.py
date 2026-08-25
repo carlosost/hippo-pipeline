@@ -149,9 +149,14 @@ def reset_registry() -> None:
     _REGISTRY.clear()
 
 
-def discover() -> None:
-    """Import every metric module so its decorator runs. Idempotent."""
-    package = importlib.import_module(__package__ or "hippo_pipeline.metrics")
+def discover(package_name: str | None = None) -> None:
+    """Import every metric module so its decorator runs. Idempotent.
+
+    `package_name` exists so the acceptance tests can point the real discovery at a
+    throwaway package. Testing it by calling the decorator directly would verify the
+    decorator, not discovery.
+    """
+    package = importlib.import_module(package_name or __package__ or "hippo_pipeline.metrics")
     for info in sorted(pkgutil.iter_modules(list(package.__path__)), key=lambda m: m.name):
         if info.name.startswith("_") or info.name in _INTERNAL_MODULES:
             continue
