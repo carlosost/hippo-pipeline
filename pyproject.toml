@@ -62,6 +62,10 @@ ignore = ["ANN401"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["ANN"]
+# cli.py is the ONE module allowed to print - stdout is a CLI's interface, and
+# scripts/lint_architecture.py enforces that no other module does it. Ruff's blanket T20
+# would otherwise force the architecture rule to be violated to satisfy the linter.
+"src/hippo_pipeline/cli.py" = ["T20"]
 # scripts/ are developer CLI tools: printing to stdout IS their interface, and they are
 # not imported by the package. Everything else applies - the architectural linter is a
 # merge gate and has no business being unlinted.
@@ -76,9 +80,14 @@ strict = true
 warn_unreachable = true
 disallow_untyped_defs = true
 
+# Tests stay strict about the code they exercise, not about their own fixtures. Annotating
+# every helper and every pytest fixture buys nothing: their types are obvious at the call
+# site and the assertions are the specification.
 [[tool.mypy.overrides]]
 module = "tests.*"
 disallow_untyped_defs = false
+disallow_untyped_calls = false
+disallow_incomplete_defs = false
 
 # -------------------------------------------------------------- coverage ----
 [tool.coverage.run]

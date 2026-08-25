@@ -1,9 +1,35 @@
 """Aggregations over domain types (ADR-003).
 
 Pure functions, individually addressable, each one answering a stated business question.
-This is the layer analysts and AI agents extend, so a new metric must cost one
-declaration and one test - never a change to ingestion.
+This is the layer analysts and AI agents extend, and a new metric costs one module and one
+test - never a change to ingestion.
 
-Empty until OQ-06 (which metrics), OQ-07 (the extension surface) and OQ-08 (how unit
-price is defined) are resolved by ADR.
+Adding a metric: copy `pharmacy_ndc_summary.py`, change the declaration and the function.
+Discovery, execution, export and documentation follow from the decorator.
 """
+
+from hippo_pipeline.metrics.catalog import render_catalog
+from hippo_pipeline.metrics.registry import (
+    MetricDeclarationError,
+    MetricOutput,
+    MetricOutputError,
+    MetricSpec,
+    discover,
+    metric,
+    registered,
+    reset_registry,
+    run_all,
+)
+
+__all__ = [
+    "MetricDeclarationError",
+    "MetricOutput",
+    "MetricOutputError",
+    "MetricSpec",
+    "discover",
+    "metric",
+    "registered",
+    "render_catalog",
+    "reset_registry",
+    "run_all",
+]

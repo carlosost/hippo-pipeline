@@ -6,11 +6,27 @@ already-parsed domain objects.
 
 Three properties follow, and they are the reason the boundary exists:
   - testability: `domain/` and `metrics/` need no mocks and no fixtures on disk
-  - swappability: changing the compute engine (OQ-01) touches this package and the
-    factories, and nothing else
-  - observability: tracing, timeouts and structured logging are injected once, here,
-    never re-implemented at a call site
-
-Empty until OQ-01 (compute engine) and OQ-02 (malformed-record policy) are resolved by
-ADR. Implementing before then means implementing twice.
+  - swappability: changing the compute engine (ADR-009 could be superseded) touches this
+    package and nothing else
+  - observability: tracing, timeouts and structured logging are injected once, here
 """
+
+from hippo_pipeline.gateway.reader import IngestCounts, IngestResult, ingest
+from hippo_pipeline.gateway.writer import (
+    write_excluded_reverts,
+    write_manifest,
+    write_quarantine,
+    write_table,
+    write_text,
+)
+
+__all__ = [
+    "IngestCounts",
+    "IngestResult",
+    "ingest",
+    "write_excluded_reverts",
+    "write_manifest",
+    "write_quarantine",
+    "write_table",
+    "write_text",
+]
