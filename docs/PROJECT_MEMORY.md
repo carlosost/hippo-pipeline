@@ -8,7 +8,7 @@
 > Process: `docs/GENERAL_ENGINEERING_PLAYBOOK.md`. Agent contract: `CLAUDE.md`.
 > Session history: `docs/DECISION_LOG.md`.
 
-**Last updated:** 2026-08-25 (session 005) · **Phase:** F-01, F-02 and F-04 specified with 41 Gherkin scenarios; implementation not started
+**Last updated:** 2026-08-25 (session 005, amended) · **Phase:** F-01, F-02 and F-04 specified with 41 Gherkin scenarios; implementation not started
 
 ---
 
@@ -160,7 +160,7 @@ Numbering is sequential and permanent. A superseded ADR keeps its number, is mar
 | [ADR-007](#adr-007-the-repository-is-an-agent-contract-enforced-by-tooling) | The repository is an agent contract, enforced by tooling | Accepted (amended) |
 | [ADR-008](#adr-008-metrics-are-registered-python-functions-over-an-exported-fact-table) | Metrics are registered Python functions over an exported fact table | Accepted |
 | [ADR-009](#adr-009-the-python-standard-library-is-the-compute-engine-zero-runtime-dependencies) | The Python standard library is the compute engine; zero runtime dependencies | Accepted |
-| [ADR-010](#adr-010-no-metric-definition-language-no-mcp-server-no-semantic-layer) | No metric definition language, no MCP server, no semantic layer | Accepted |
+| [ADR-010](#adr-010-no-metric-definition-language-no-mcp-server-no-semantic-layer) | No metric definition language, no MCP server, no semantic layer | Accepted (amended: no LLM framework either) |
 | [ADR-011](#adr-011-malformed-records-are-quarantined-out-of-scope-records-are-excluded-separately) | Malformed records are quarantined; out-of-scope records are excluded separately | Accepted (amended) |
 | [ADR-012](#adr-012-revert-resolution--a-claim-is-reverted-at-most-once-keyed-on-claim_id) | Revert resolution — a claim is reverted at most once, keyed on `claim_id` | Accepted |
 | [ADR-013](#adr-013-all-timestamps-are-interpreted-as-utc-and-the-assumption-is-published) | All timestamps are interpreted as UTC, and the assumption is published | Accepted |
@@ -548,7 +548,7 @@ reaching for the fashionable one.
 
 ### ADR-010: No metric definition language, no MCP server, no semantic layer
 
-**Date:** 2026-08-25 · **Status:** Accepted · **Relates to:** ADR-008
+**Date:** 2026-08-25 · **Amended:** 2026-08-25 · **Status:** Accepted · **Relates to:** ADR-008
 
 **Context.** Both were live candidates for OQ-07, and both are what a reader might expect
 given the brief names AI agents explicitly. Recording *why they were rejected* is worth more
@@ -591,6 +591,33 @@ server or any other RPC surface over the metrics, or (c) a semantic layer / metr
 The brief asks for a foundation agents can use, and asks to see the trade-offs that were
 weighed. A documented rejection with named reversal conditions answers both; a half-built
 server answers neither.
+
+**Amendment, 2026-08-25 — no LLM framework either (LangChain, LangGraph or equivalent).**
+
+The brief names AI agents explicitly, which invites the question directly. The answer is
+that the clause is about **consumption, not implementation**: agents should be able to *use*
+the output and *extend* the metric set, which ADR-008 answers. An agent inside the pipeline
+would make it worse, not better.
+
+- **Nothing to orchestrate.** LangGraph exists for cyclic state machines — branching,
+  checkpointing, pause/resume, human-in-the-loop. This pipeline is a straight line: read →
+  validate → resolve reverts → aggregate → write. No cycles, no state carried between steps,
+  no decision that requires a model.
+- **It would break charter §1.3.4.** Byte-identical output for identical input is
+  incompatible with a non-deterministic component. For a system that computes revenue from
+  pharmacy claims, non-deterministic aggregation is disqualifying, not a trade-off.
+- **ADR-009 already forbids the dependency**, and LangChain is among the largest dependency
+  trees in the ecosystem — added to a job that completes in 69 ms.
+
+**Reversal condition.** An LLM becomes right *outside* this pipeline: natural-language
+querying over the exported fact table, or narrative explanation of anomalies in the metrics.
+Both are consumers of `out/`, not stages within it, and both fall under this ADR's existing
+MCP reversal condition — a live consumer that cannot run Python.
+
+**On the two playbooks.** `docs/ENGINEERING_PLAYBOOK.md` covers production LLM agentic
+systems — LangGraph, RAG pipelines, LangSmith tracing, eval sets — and is the right document
+for a different class of project. `docs/GENERAL_ENGINEERING_PLAYBOOK.md` governs this one and
+is stack-agnostic by design. Knowing which of the two applies is itself the judgment call.
 
 
 ---

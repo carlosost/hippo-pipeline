@@ -373,3 +373,28 @@ for all three feature files (red) → `domain/` types → `gateway/` readers and
 revert resolution → registry and writers → one real metric wired to the real CLI, so the
 tested path is the shipped path before the session closes. Delete the `test-bdd` exit-5 guard
 in the same change.
+
+### Session 005 addendum — ADR-010 amended: no LLM framework
+
+Asked directly whether the pipeline would use LangChain or LangGraph. It will not, and the
+reasoning is now recorded rather than left to be re-litigated — a reviewer will likely ask
+the same thing, since the brief names AI agents explicitly.
+
+The confusion the amendment resolves: the brief's agent clause is about **consumption, not
+implementation**. Agents should be able to use the output and extend the metric set, which is
+ADR-008. An agent inside the pipeline would make it worse — there is nothing to orchestrate
+in a straight-line batch job, and a non-deterministic component is incompatible with charter
+§1.3.4's byte-identical output. ADR-009 forbids the dependency in any case.
+
+Recorded as an amendment to ADR-010 rather than a new ADR: ADR-009 already implied it, and
+the decision is the same shape as the MCP and DSL refusals it sits beside — including the
+same reversal condition, a live consumer that cannot run Python. ADR-010's title and anchor
+are unchanged so existing cross-references keep working; the index row carries the scope
+extension.
+
+Also noted in the ADR: `docs/ENGINEERING_PLAYBOOK.md` (LLM agentic systems, LangGraph, RAG,
+eval sets) is the right playbook for a different class of project;
+`docs/GENERAL_ENGINEERING_PLAYBOOK.md` governs this one.
+
+The README now carries a short "Why there is no LLM in here" section, because this is a
+question the deliverable should answer without the reader having to open the PMA.

@@ -30,8 +30,26 @@ Two of them are now settled, in [`docs/PROJECT_MEMORY.md`](docs/PROJECT_MEMORY.m
 - **ADR-010 — what this deliberately will not have:** no metric definition language, no
   MCP server, no semantic layer, each with the conditions under which it becomes right.
 
-What remains open is the malformed-record policy and the revert semantics — the highest-risk
-correctness decisions in the project, and the reason no ingestion code exists yet.
+What remains open is the metric set itself and one idempotency question — everything that
+shapes the code is decided across 14 ADRs.
+
+### Why there is no LLM in here
+
+The brief mentions AI agents, so it is worth being explicit: there is no LangChain, no
+LangGraph, no model call anywhere in this pipeline.
+
+The agent clause in the brief is about **consumption, not implementation** — agents should be
+able to use the output and extend the metric set, which is what ADR-008 provides. An agent
+*inside* the pipeline would make it worse: there is nothing to orchestrate (read → validate →
+resolve → aggregate → write is a straight line with no cycles and no inter-step state), and a
+non-deterministic component is incompatible with the requirement that identical inputs produce
+byte-identical outputs. For a system that computes revenue from pharmacy claims, that is
+disqualifying rather than a trade-off.
+
+Where an LLM does belong is *downstream* of `out/` — natural-language querying over the
+exported fact table, or explaining an anomaly in the metrics. Both are consumers of the
+output, not stages in it. ADR-010 records the reasoning and the conditions that would change
+it.
 
 What exists today:
 
