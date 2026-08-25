@@ -8,7 +8,7 @@
 > Process: `docs/GENERAL_ENGINEERING_PLAYBOOK.md`. Agent contract: `CLAUDE.md`.
 > Session history: `docs/DECISION_LOG.md`.
 
-**Last updated:** 2026-08-24 (session 001) · **Phase:** foundation, no pipeline code yet
+**Last updated:** 2026-08-25 (session 002) · **Phase:** foundation, no pipeline code yet
 
 ---
 
@@ -338,6 +338,27 @@ than quietly resolving them in code is the point: each will become an ADR, and t
 will record why the alternative lost. Nothing in `src/` may assume an answer to an open
 question.
 
+### Decision order
+
+Open questions are **not** answered in ID order. IDs are permanent labels, assigned when
+the question was first noticed; the sequence below is the order in which they are
+decided, and it changes as evidence arrives.
+
+| # | Decide | Why it comes here |
+|---|---|---|
+| 1 | **OQ-07** — the agent/analyst extension surface | It dominates OQ-01. If metrics are Python functions, the zero-dependency option wins; if they are SQL over a published artifact, an engine that speaks SQL wins. Deciding the engine first would settle OQ-07 by accident. |
+| 2 | **OQ-01** — compute engine | Evidence already gathered: `docs/spikes/oq-01-compute-engine/`. Becomes a short decision once OQ-07 is fixed. |
+| 3 | **OQ-02** — malformed-record policy | Its implementation depends on what the engine can express per record. |
+| 4 | **OQ-03, OQ-04, OQ-10, OQ-11** — revert and reference-data semantics | Pure domain rules. Independent of the engine, and the highest-risk correctness decisions in the project. |
+| 5 | **OQ-05, OQ-09** — output format, idempotency and late arrivals | Shaped by 1–4. |
+| 6 | **OQ-06, OQ-08** — the metric set and how unit price is defined | Cheapest to change; decided last, once the surface exists to express them on. |
+| 7 | **OQ-12** — deployment and ownership model | Prose in the README, written once the system it describes exists. |
+
+> **Correction (session 002).** Session 001 recorded OQ-01 as the next action. That was
+> the wrong order: the engine choice is downstream of the extension surface, not upstream
+> of it. Recorded here rather than silently re-sequenced — a sequencing mistake is worth
+> as much to a future reader as the decision itself.
+
 | ID | Question | Blocks | Status |
 |---|---|---|---|
 | OQ-01 | Which compute engine? | ADR-008, all of `gateway/` | Open |
@@ -362,7 +383,16 @@ control, most code to write); Polars (lazy execution, excellent single-node scal
 one dependency); DuckDB (SQL as the metric language — which interacts directly with
 OQ-07, since SQL is a surface agents already speak); PySpark (justifiable only at a
 volume nothing here demonstrates). Decide with the requirements-first table in playbook
-§1.2, not by preference. **This is the first decision to make.**
+§1.2, not by preference.
+
+**Evidence gathered — see [`docs/spikes/oq-01-compute-engine/`](spikes/oq-01-compute-engine/README.md).**
+Measured, not assumed: a pure-stdlib pass over the whole dataset takes **69 ms** at
+391k records/sec, so throughput does not select the engine. pandas silently turns
+`'0987654321'` into `987654321`. Polars loses an entire file to one non-object record,
+and its lazy/streaming path cannot read JSON *array* files at all. DuckDB reads lists of
+directory globs in place, survives malformed records, and produces a per-record
+rejection reason in one pass. The spike's leading recommendation is DuckDB — **but it is
+explicitly conditional on OQ-07**, which is why OQ-07 is now decided first.
 
 **OQ-02 — What happens to a malformed record?**
 The sample contains 2 claims missing `quantity` and 1 with `quantity == 0`. Options:
@@ -404,8 +434,8 @@ out of line" signal the brief describes); claim volume and revenue per chain; ti
 revert distribution. Each proposed metric needs a stated business question, or it is
 decoration.
 
-**OQ-07 — How do agents extend this without reading ingestion code?**
-The brief's real differentiator. Candidates: a declarative metric registry (YAML or
+**OQ-07 — How do agents extend this without reading ingestion code?** — *next decision*
+The brief's real differentiator, and the question that determines OQ-01. Candidates: a declarative metric registry (YAML or
 dataclasses) that the pipeline executes and that also generates documentation; a SQL
 semantic layer over a materialised table; an MCP server exposing metrics as tools. The
 test for any answer: *can a new metric be added by writing one declaration and one test,

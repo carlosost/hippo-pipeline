@@ -26,7 +26,11 @@ What exists today:
 - A **profiled** sample dataset — 14 measured facts about the provided data, each one
   either constraining the design or opening a question. Reproduce them with
   `python3 scripts/profile_sample_data.py`.
-- A Project Memory Asset carrying 7 accepted ADRs and 12 open questions.
+- A Project Memory Asset carrying 7 accepted ADRs and 12 open questions, with an
+  explicit **decision order** separate from ID order.
+- A committed, runnable spike for the compute-engine question —
+  [`docs/spikes/oq-01-compute-engine/`](docs/spikes/oq-01-compute-engine/README.md) —
+  so the ADR that follows cites measurements rather than opinion.
 
 Running the CLI today exits `2` and tells you which open questions block it.
 

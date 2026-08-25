@@ -73,3 +73,71 @@ files, deterministic output, no state between runs unless OQ-09 says otherwise,
 metric layer readable by non-engineers), then map stdlib / Polars / DuckDB / PySpark
 against them in a table, then write ADR-008. Spec session only — no implementation in
 the same session.
+
+---
+
+## Session 002 — 2026-08-25 — OQ-01 spike, and a sequencing correction
+
+**Goal.** Give OQ-01 (compute engine) enough context to be decided, rather than argued.
+
+**Method.** Ran the candidates against the real dataset plus a synthetic file carrying
+the breakage a real event stream produces — a string where a number belongs, a null
+price, an unparseable timestamp, an extra field, and an array element that is not an
+object at all. Committed as `docs/spikes/oq-01-compute-engine/`, runnable:
+
+```
+uv run --with duckdb --with polars --with pandas \
+    python docs/spikes/oq-01-compute-engine/spike.py
+```
+
+None of those libraries is a project dependency, and `uv run --with` keeps it that way.
+
+**What the measurements changed.**
+
+1. **Throughput is not the deciding factor and never was.** A pure-stdlib streaming pass
+   over all 27,076 records takes **69 ms** at 391k records/sec in 39 MB. Linear
+   extrapolation puts 100M claims at ~4.5 minutes. Every "it scales better" argument was
+   about a constraint that does not bind.
+2. **pandas is out on a concrete hazard, not on taste.** Default `read_csv` typed `npi`
+   as `int64` and turned `'0987654321'` into `987654321`. The pharmacy file contains two
+   leading-zero NPIs and 9 of 10 NDCs are leading-zero.
+3. **Polars is out on the input format.** `scan_ndjson` — the lazy/streaming path —
+   cannot read JSON *array* files, and `read_json` has no glob support and loses an
+   entire file to a single non-object element. Using it requires a Python pre-pass, after
+   which the stdlib ingest is already written.
+4. **DuckDB satisfies OQ-01, OQ-02 and OQ-07 with one mechanism**: parse permissively via
+   `read_json_objects`, type with `TRY_CAST` so a bad cast yields NULL instead of
+   aborting the file, and quarantine in SQL so every rejected record carries a reason
+   list and its source filename. Verified: 27,075 accepted / 7 rejected, each with a
+   reason, from a directory list read in place.
+
+**PostgreSQL was raised and is recorded as rejected-with-reasons** in §6 of the spike
+README, so it is not re-litigated later. Short form: DuckDB is a compute engine that
+happens to persist, Postgres is a system of record that happens to compute, and this
+pipeline needs the former. Postgres becomes correct with concurrent writers, a networked
+serving layer, governance requirements, or an incremental pipeline (OQ-09).
+
+**The correction.** Session 001 ended by naming OQ-01 as the next action. That was the
+wrong order. The engine choice is *downstream* of OQ-07 (how analysts and agents extend
+the pipeline): if metrics are Python functions, the zero-dependency option wins; if they
+are SQL over a published artifact, an engine that speaks SQL wins. Deciding the engine
+first would have settled OQ-07 by accident — which is exactly the "confident code
+satisfying an ambiguous spec" failure the playbook opens with.
+
+The PMA now carries an explicit **decision order** (§4) separate from ID order. IDs stay
+permanent; the sequence is what changes as evidence arrives.
+
+**What was deliberately NOT done.** ADR-008 was not written. The spike's leading
+recommendation is DuckDB, and it is explicitly conditional — recording it as a decision
+before OQ-07 is settled would be the same mistake in a different place.
+
+**Verification.** Spike runs end to end against the full dataset from a clean checkout;
+`make check` green.
+
+**Next action.** Resolve **OQ-07 — the extension surface**. Spec session only, no
+implementation. Enumerate what "a business analyst or an agent adds a metric
+autonomously" concretely requires, then map the candidates against it: a declarative
+Python metric registry, SQL views over a published artifact, and an MCP server exposing
+metrics as tools. The acceptance test for any answer is fixed in the PMA: *can a new
+metric be added by writing one declaration and one test, touching no IO code?* Output is
+ADR-013 plus the revised text of OQ-01, which then becomes a short decision.
