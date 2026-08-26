@@ -27,11 +27,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Documents this project did not write and must not rewrite.
-INHERITED = {
-    "docs/ASSIGNMENT.md",
-    "docs/ENGINEERING_PLAYBOOK.md",
-    "docs/GENERAL_ENGINEERING_PLAYBOOK.md",
-}
+# The assignment brief came from outside and is not ours to correct. The playbooks are
+# ours - this project amended one of them - so they are checked like anything else.
+INHERITED = {"docs/ASSIGNMENT.md"}
 SKIP_DIRS = (".git", ".venv", "node_modules")
 
 LINK = re.compile(r"\[([^\]]*)\]\(([^)\s]+)\)")
@@ -51,10 +49,18 @@ def strip_code_blocks(text: str) -> str:
 
 
 def slug(heading: str) -> str:
-    """GitHub's heading anchor, near enough: lowercase, punctuation dropped, spaces to -."""
+    """GitHub's heading anchor: lowercase, punctuation dropped, each space becomes a hyphen.
+
+    `\s` and not `\s+`. github-slugger replaces every space individually, so a heading like
+    "Foundation & Specification" - where dropping the ampersand leaves two adjacent spaces -
+    anchors as `foundation--specification`, with two hyphens. Collapsing them here made this
+    checker report correct links as broken, which then prompted a "fix" that rewrote working
+    anchors into broken ones. A checker that is wrong is worse than no checker: it does not
+    merely fail to catch defects, it manufactures them (AP-19).
+    """
     text = heading.lstrip("#").strip().lower()
     text = re.sub(r"[^\w\s-]", "", text)
-    return re.sub(r"\s+", "-", text)
+    return re.sub(r"\s", "-", text)
 
 
 def main() -> int:

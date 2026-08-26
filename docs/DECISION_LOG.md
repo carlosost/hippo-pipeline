@@ -736,3 +736,58 @@ class of unbacked claim. Change or drop both together if MIT is not intended.
 
 **Verification.** `make check` green on the working tree and on a fresh clone; 3.10 and
 3.12 both green; `make test-system` green.
+
+---
+
+## Session 011 — 2026-08-26 — playbook amended; and the new lint proved its own point
+
+**Goal.** Feed what this project learned back into
+`docs/GENERAL_ENGINEERING_PLAYBOOK.md`, without adding anything that contradicts what is
+already there and dilutes it.
+
+**Nine changes, every one traceable to a defect or near-miss in this build**, listed in a
+revision table at the top of the playbook so a canonical copy elsewhere can be merged
+selectively:
+
+- **§1.7 (new)** — decision order is itself a decision; a dominating question answered
+  second means the second question was decided by accident. Corollary: never reserve ADR
+  numbers for unwritten decisions.
+- **AP-19 (new)** — the document that asserts what the code does not do. Every enforcement
+  mechanism the playbook recommends reads code; none reads prose.
+- **AP-20 (new)** — quarantine that conflates a defect with an exclusion.
+- **§1.3** — ADR granularity is about blast radius, not importance; reject with a
+  measurement, which carries its own reversal condition.
+- **§2.5** — for computed outputs, derive expected values with an independent program.
+- **AP-01** — the parse-time variant, where the decoder destroys the value before your code
+  runs.
+- **AP-11** — prevention over detection: do not build an abstraction before its caller.
+- **AP-13** — the maintainer's convenience path diverges from the documented one.
+- **§5.1 / §5.2** — `jq` is not universal; a fifth hook pattern that *blocks* a write.
+
+Deliberately excluded, because the playbook's value is being stack-agnostic: anything about
+specific engines, the statistics used for the reversal metric, and the staged-output
+pattern (real, but this playbook leans toward services rather than batch jobs).
+
+**Then AP-19 caught the tool written to enforce AP-19.**
+
+`scripts/check_doc_links.py`, added last session, reported five broken anchors in the PMA
+index. Four were real. The rule it used to derive anchors collapsed runs of whitespace to a
+single hyphen — but `github-slugger` replaces **each** space individually, so a heading
+containing " — " or " & " loses the punctuation and keeps *both* surrounding spaces,
+anchoring with a double hyphen.
+
+So the checker reported a correct link as broken, and the "fix" it prompted rewrote a
+**working** anchor into a broken one. The error surfaced only when the playbook's own table
+of contents — written long before any of this, and correct — was run through the checker and
+failed.
+
+This is precisely the anti-pattern added to the playbook an hour earlier, in its purest
+form: **a checker that is wrong does not merely fail to catch defects, it manufactures
+them.** The reasoning is now a docstring on the function that got it wrong, and the rule is
+`\s`, not `\s+`. Both playbooks have been removed from the checker's skip list and pass.
+
+**Verification.** `make check` green, `make test-system` green, doc links clean across every
+document this project authored or amended.
+
+**Next action.** None outstanding. The playbook amendments live in this repository's copy;
+merge them into the canonical copy using the revision table at the top of the file.

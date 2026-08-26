@@ -17,6 +17,24 @@ companion adds domain-specific depth.
 
 ---
 
+**Revision, 2026-08-26 — additions from the `hippo-pipeline` project.** Every change below
+came from a defect or a near-miss in a real build, not from theory. If you keep a canonical
+copy of this playbook elsewhere, these are the sections to merge:
+
+| Section | Change | What prompted it |
+|---|---|---|
+| §1.3 | ADR granularity is about blast radius, not importance; reject with a measurement | 18 ADRs where 15 would have been better; a feature killed by data rather than opinion |
+| **§1.7 (new)** | Decision order is itself a decision; never reserve ADR numbers | A dominating question answered second, which reversed an already-made choice when corrected |
+| §2.5 | For computed outputs, derive expected values with an independent program | The session split is the weaker guard for aggregations |
+| AP-01 | The parse-time variant: the decoder destroys the value before your code runs | `Decimal(str(x))` after a JSON float parse |
+| AP-11 | Prevention over detection: do not build an abstraction before its caller exists | A registry that would have had only tests as callers |
+| AP-13 | The maintainer's convenience path diverges from the documented one | The documented setup command was unexercised until the final check |
+| **AP-19 (new)** | The document that asserts what the code does not do | A decision record promising behaviour that was never implemented, undetected for four sessions |
+| **AP-20 (new)** | Quarantine that conflates a defect with an exclusion | A 15% "reject rate" for a source whose defect rate was 0.011% |
+| §5.1, §5.2 | `jq` is not universal; a fifth hook pattern that *blocks* a write | A hook that fails on a missing tool trains you to ignore hooks |
+
+---
+
 ## Table of Contents
 
 1. [Project Foundation & Specification](#1-project-foundation--specification)
@@ -118,6 +136,20 @@ decisions (negative ADRs are often the most important).
 **What does not deserve an ADR:** naming conventions, code style, single-file
 refactors, and any decision reversible in under an hour.
 
+**The test is about blast radius, not importance.** A decision can be central to the
+system and still belong *inside* an existing ADR rather than beside it. Closely-related
+decisions — three facets of one question — should share one record. Splitting them reads
+as thoroughness and is not: every additional document is additional surface that has to be
+kept true, and documents that are not kept true are worse than absent (AP-19). If two ADRs
+would be read together every time, they are one ADR.
+
+**A rejection backed by a measurement is worth more than one backed by reasoning**, and it
+comes with its own reversal condition for free. "We are not building X because it does not
+fit our model" invites the same argument in six months. "We are not building X because we
+measured it and the signal was 11.9% against a runner-up of 11.8% — build it when the mode
+exceeds 30%" ends the argument and tells the next person exactly what would change it.
+Measure before you reject, not only before you accept.
+
 **ADR numbering is sequential and permanent.** ADR-007 does not become ADR-007a or
 get removed when superseded. It stays, marked Superseded, pointing at ADR-012 which
 replaced it. Reviewers can read the full decision history without consulting git blame.
@@ -216,6 +248,45 @@ boundary before the happy path is built.
 4. `make test` passes at 100% in the deterministic tier.
 5. Integration tests verify the new endpoint or service behavior end-to-end.
 6. The feature's spec file in `memory/features/` is marked `Status: Done`.
+
+### 1.7 Decision Order Is Itself a Decision
+
+Open questions accumulate in the order they are *noticed*, which is almost never the order
+in which they should be *answered*. The PMA records both, and they must be kept apart:
+**IDs are permanent labels; the decision order is a separate, changing list.**
+
+The failure this prevents is subtle and expensive. Some questions **dominate** others: the
+answer to A determines what the sensible answer to B even is. Decide B first and you have
+not decided B — you have decided A by accident, silently, without recording why.
+
+A worked example. Two open questions:
+
+- **A:** what surface do others use to extend this system?
+- **B:** which engine/framework does it run on?
+
+These look independent and are not. If A resolves to "plain functions in our language",
+the zero-dependency option wins B. If A resolves to "SQL over a published artifact", an
+engine that speaks SQL wins B. Answering B first means the engine picks the extension
+surface — the tool choosing the architecture, which is exactly backwards. In the project
+this playbook was extended from, correcting that order **reversed the answer to B**: the
+evidence had leaned one way, and the leading candidate lost its decisive argument the
+moment A was settled.
+
+**How to spot a dominating question.** For each pair, ask: *does the answer to one change
+what "good" means for the other?* If yes, that one goes first. Most pairs are independent
+and the order is arbitrary; the few that are not are where the damage happens.
+
+**Corollary: never reserve ADR numbers for decisions not yet made.** It is tempting to
+write "OQ-07 → ADR-013" in the open-questions table. Do not. Numbers are assigned when an
+ADR is *written*, and since questions are not answered in ID order the reservations will be
+wrong — producing gaps, misleading cross-references, and an index that lies about what
+exists. Record what each open question *blocks in the code*, not which future ADR it will
+become.
+
+**Re-ordering is a first-class event, not an embarrassment.** When the order changes,
+record the change and the reason next to the table. A future reader who sees only the final
+sequence learns nothing; one who sees that the sequence was corrected, and why, learns the
+most valuable thing in the document.
 
 ---
 
@@ -382,6 +453,22 @@ mid-task:
 **Verify programmatically, not by assertion.** After any code change, run the test
 suite and paste the output. A response of "this should work" without a test run is
 not acceptable. The test output is the acceptance criterion.
+
+**For computed outputs, derive the expected values with a second, independent program.**
+The session split above exists so that tests specify rather than confirm. For aggregations,
+statistics and any other derived number, that split is the *weaker* form of the guard: a
+scenario written a day earlier, by the same person who will write the implementation, can
+still be written to match whatever the function is going to compute. Nothing stops it.
+
+A number produced by a **different program** cannot be bent. Write a throwaway script that
+re-reads the raw inputs and re-applies the rules without importing the implementation, and
+assert against what it produces. It costs an hour, it is deleted afterwards or committed as
+a spike, and it is the only technique that catches a whole aggregation being subtly,
+consistently wrong — the failure mode where every test passes because every test was
+written against the same misunderstanding.
+
+Use both where you can. Where you must choose, for derived numbers, choose the independent
+derivation.
 
 **Split by concern, not by time.** When a long task involves both spec work and
 implementation work, run them in separate sessions. Session 1 produces the ADR and
@@ -776,9 +863,23 @@ class _UnwrappingClient:
         return result.content if hasattr(result, "content") else str(result)
 ```
 
+**Variant — the parser destroys the value before your code sees it.** The same family,
+but the loss happens at *parse* time and is irreversible, so no amount of careful handling
+downstream can recover it. A JSON decoder converts numbers to the platform float type
+before returning them; wrapping that float in an exact decimal afterwards preserves the
+error rather than removing it. A price of `0.1` becomes `0.1000000000000000055511151231257827`
+and stays that way. The tell is that the bug survives code that looks obviously correct.
+
+**Fix:** intervene at parse time, not after. Most decoders expose a hook for exactly this
+(`parse_float` / `parse_int`, a custom reviver, a schema-driven reader). If yours does not,
+read the raw token yourself. Write the test with a value that cannot survive a float
+round-trip — `0.1` is the classic — so the naive implementation fails loudly instead of
+being off in the fifteenth decimal place where nobody looks.
+
 **Lesson:** When integrating any real SDK against a hand-written stub, validate the
 actual return type of every method before writing code that calls it. Never assume
-the real SDK has the same calling convention as your stub.
+the real SDK has the same calling convention as your stub. And check *where* a value is
+converted, not only *what* it converts to.
 
 ---
 
@@ -1026,6 +1127,12 @@ a later task needs reporting, metrics, or idempotency — wire a *separate* real
 leave the first as orphaned scaffolding. Both look correct in isolation. Grep for
 non-test callers of any abstraction an agent introduces before accepting it.
 
+**Prevention beats detection here.** The grep above finds this after it exists. Cheaper is
+to refuse to build an abstraction before its production caller exists — if the feature that
+will call it is two sessions away, the abstraction waits two sessions. "This component has
+no open questions blocking it" is a true statement that hides a false one: a component
+whose only possible caller is a test is blocked, whatever the dependency list says.
+
 **Lesson:** Test coverage of a function you do not call in production is negative value:
 maintenance cost plus false confidence. Connect the tested path to the shipped path, or
 remove the abstraction.
@@ -1080,9 +1187,21 @@ tool's path configuration explicitly (e.g. Alembic's `prepend_sys_path`)
 rather than relying on the runner's implicit behavior. Treat "container boots
 cleanly from a fresh volume" as a test case in its own right.
 
+**Second symptom, same root cause: the maintainer's convenience path.** Long-running work
+accumulates shortcuts — an environment outside the project directory, cache overrides, a
+handful of exported variables that make the loop faster. Every test passes, thousands of
+times, through a path **no other person will ever take**. The documented setup command goes
+unexercised for the entire life of the project and is discovered to be broken by the first
+stranger who runs it.
+
+**Fix:** at least once before shipping, and ideally in CI, run the documented path exactly
+as written — fresh clone, no exported variables, the setup command from the README, then
+the gate. It takes two minutes and it is the only test of the instructions themselves.
+
 **Lesson:** A test suite that never runs inside the shipping artifact tests a
 different program. The gap between "tests pass" and "the deploy path ran" is
-where first-boot failures live.
+where first-boot failures live — and the documented instructions are part of the
+deploy path.
 
 ---
 
@@ -1209,6 +1328,76 @@ as a correction to the previous action, never as a new one.
 
 ---
 
+#### AP-19: The Document That Asserts What the Code Does Not Do
+
+**Symptom:** A design document states that the system does something. It does not. The gap
+survives for months and is found by accident, usually while investigating something else.
+Nobody was careless — the document was simply trusted exactly as much as the code it
+described.
+
+**Root cause:** Every enforcement mechanism in this playbook reads **code**. The
+architectural lint parses source. The hooks fire on file writes. CI runs tests. None of them
+reads prose. §1.1 makes the project memory asset the authoritative source of truth and
+gives it no mechanism for staying true — so an ADR is the one artifact in the repository
+that can assert anything at all and never be contradicted.
+
+This is §1.1's own thesis turned on itself: a rule with no enforcement is followed until the
+first deadline. It applies to the documents describing the rules just as much as to the code
+obeying them.
+
+**Fix — three habits, in decreasing order of value:**
+
+1. **An ADR that asserts testable behaviour names the test that proves it, or is reworded
+   as an intention.** "The manifest records a digest of every input" is a claim and needs a
+   test. "We intend the manifest to identify its inputs" is a direction and needs none. Know
+   which one you are writing.
+2. **Give documentation a lint.** Relative links resolve; in-page anchors match real
+   headings; generated files match their generator. These are cheap checks that catch the
+   small rot before it teaches readers to distrust the document. A generated file plus a
+   drift check makes staleness impossible rather than unlikely.
+3. **Verify claims about the environment by running them.** A negative result usually has
+   several possible causes and no diagnostic value on its own. `docker info` fails
+   identically whether a daemon is absent or merely not started; writing "there is no
+   daemon" into a decision record turns an unverified guess into an institutional fact.
+
+**Lesson:** Documentation that lies is worse than documentation that is missing, because it
+is believed. Every claim in a design document is either enforced, dated, or decaying — and
+you do not get to choose which without doing something about it.
+
+---
+
+#### AP-20: Quarantine That Conflates a Defect With an Exclusion
+
+**Symptom:** A pipeline reports that it rejected 15% of its input. Investigation shows the
+source system is fine: almost all of those records were **valid and simply not in scope**.
+The handful of genuine defects — 0.011% — are buried under records that were never a
+problem. Either the team learns to ignore the reject metric, or somebody escalates to an
+upstream team that has done nothing wrong.
+
+**Root cause:** One sink for everything that "didn't make it through", merging two facts
+that mean opposite things:
+
+| | Meaning | Who acts | Should it alert? |
+|---|---|---|---|
+| **Defect** | The record is malformed. Something upstream is broken | The source system's owner | Yes |
+| **Exclusion** | The record is well-formed and outside our scope | Nobody, usually | No — but the *count* is a business signal |
+
+Merging them makes the defect rate unreadable in both directions: real defects are hidden
+by volume, and a legitimate scope filter looks like an incident.
+
+**Fix:** two sinks, two counters, two thresholds. A quality gate fires on the defect rate
+only; an exclusion is never a failure condition. Both counts appear in the run summary,
+because "which sources are sending us records we have no configuration for" is a real
+question with real value — usually an onboarding lead rather than a bug.
+
+**Generalises past data pipelines.** Any filtering stage has this shape: a request rejected
+as malformed and a request rejected as unauthorised are not the same event; a message that
+failed to parse and a message correctly routed elsewhere are not the same event. Wherever
+code decides "this one does not continue", ask whether it is answering *broken* or *not
+mine*, and count them apart.
+
+---
+
 ### 4.5 Numeric Thresholds That Require Empirical Tuning
 
 The following parameters are commonly set to "reasonable" defaults and left untouched.
@@ -1270,7 +1459,21 @@ The `jq` pipeline extracts the file path from the tool event JSON. The `case` bl
 filters by glob pattern so the command only runs on relevant files. Multiple hook
 entries in the array run in sequence after every write.
 
-### 5.2 The Four Generic Hook Patterns
+**A note on `jq`.** It is the clearest way to write these examples and it is not installed
+everywhere — a hook that fails because a tool is missing is worse than no hook, because it
+trains you to ignore hook output. If the projects you work on cannot assume `jq`, extract
+the path with the interpreter the project already depends on and keep the rest identical:
+
+```bash
+python3 -c "import json,sys; e=json.load(sys.stdin); \
+print((e.get('tool_input') or {}).get('file_path') \
+      or (e.get('tool_response') or {}).get('filePath') or '')"
+```
+
+Whatever the extractor, it must never fail loudly on an event it does not understand.
+Print an empty line and exit zero; the `case` block will then match nothing.
+
+### 5.2 The Generic Hook Patterns
 
 **Pattern 1 — Architectural lint on source file save**
 
@@ -1346,12 +1549,50 @@ Concrete examples of paired file relationships worth protecting with this hook:
 - `docker-compose.yml` ↔ `.env.example` (all services have their required vars)
 - `openapi.yaml` ↔ `tests/test_api_contract.py` (schema matches test fixtures)
 - `Makefile` ↔ `README.md` (documented commands actually exist)
+- a generated file ↔ its generator (regenerate to a temp file and diff)
+
+**Pattern 5 — Block a write before it happens (`PreToolUse`)**
+
+The four patterns above all report *after* the fact, which §5.4 notes is the limitation of
+`PostToolUse`. For the small number of paths where a write must be **prevented** rather than
+noticed, `PreToolUse` is the exception worth using:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 scripts/hooks/protect.py",
+            "statusMessage": "Checking protected paths..."
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The script reads the event on stdin and **exits 2 to block**, writing its reason to stderr,
+where the assistant will read it. Exit 0 allows the write. Never block on an event that
+failed to parse — an unparseable event should allow, or a malformed payload becomes an
+outage.
+
+Worth protecting this way: test fixtures and golden files that results are judged against,
+generated files that should only ever be produced by their generator, vendored code, and
+lockfiles. The distinguishing question is whether a well-meaning edit does damage that a
+later report cannot undo. Keep the list short — a gate that fires on ordinary work gets
+disabled, and then nothing is protected.
 
 ### 5.3 Generic settings.json Template
 
 Copy `.claude/generic-settings.json` from this repo and customise for a new project.
-The file contains all four patterns with placeholder paths and commands that document
-what to replace.
+The file contains the four `PostToolUse` patterns with placeholder paths and commands that
+document what to replace. (It predates Pattern 5; add the `PreToolUse` block from §5.2 by
+hand if the project has paths worth protecting.)
 
 See the file at `.claude/generic-settings.json` for the full template. Rename it to
 `.claude/settings.json` in the target project after filling in the project-specific
