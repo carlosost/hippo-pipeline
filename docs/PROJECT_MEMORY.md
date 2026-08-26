@@ -8,7 +8,7 @@
 > Process: `docs/GENERAL_ENGINEERING_PLAYBOOK.md`. Agent contract: `CLAUDE.md`.
 > Session history: `docs/DECISION_LOG.md`.
 
-**Last updated:** 2026-08-25 (session 007) · **Phase:** complete — four metrics ship, 16 ADRs, one open question (OQ-09) and two documentation items
+**Last updated:** 2026-08-25 (session 008) · **Phase:** complete — every engineering question closed. 17 ADRs; OQ-12 (deployment prose) is all that remains
 
 ---
 
@@ -167,6 +167,7 @@ Numbering is sequential and permanent. A superseded ADR keeps its number, is mar
 | [ADR-014](#adr-014-pharmacy-reference-data-is-current-state-not-point-in-time) | Pharmacy reference data is current-state, not point-in-time | Accepted |
 | [ADR-015](#adr-015-unit-price-is-quantity-weighted-by-default-and-every-metric-states-its-formula) | Unit price is quantity-weighted by default, and every metric states its formula | Accepted |
 | [ADR-016](#adr-016-the-exported-metric-set) | The exported metric set | Accepted |
+| [ADR-017](#adr-017-full-recompute-staged-output-and-inputs-identified-by-digest) | Full recompute, staged output, and inputs identified by digest | Accepted |
 
 **On numbering.** Session 001 pre-assigned ADR numbers to decisions that had not been made
 (`OQ-07 → ADR-013`). That was a mistake: numbers are assigned when an ADR is *written*, and
@@ -828,7 +829,7 @@ memory.
 
 ### ADR-014: Pharmacy reference data is current-state, not point-in-time
 
-**Date:** 2026-08-25 · **Status:** Accepted · **Resolves:** OQ-11
+**Date:** 2026-08-25 · **Amended:** 2026-08-25 (by ADR-017) · **Status:** Accepted · **Resolves:** OQ-11
 
 **Context.** The pharmacy dataset is described as slowly-changing reference data. That raises
 a question the file itself cannot answer: if a pharmacy is removed next month, do its past
@@ -849,6 +850,11 @@ claim in that run regardless of when the claim occurred, and is excluded per ADR
   different history.
 - The manifest records a digest of the pharmacy file used, so any two runs that disagree can
   be explained rather than argued about.
+  **Amendment, 2026-08-25:** this promise was written here and never implemented — the
+  manifest recorded paths only. ADR-017 implements it and goes further, hashing *every*
+  input file plus a combined `inputs_digest`. Recorded rather than quietly fixed: an ADR
+  that promises behaviour the code does not have is exactly the failure ADR-007 exists to
+  prevent, and it is worth a future reader knowing it happened here.
 - Point-in-time remains available later without a redesign: it needs effective-dated
   reference data, and the join moves from `npi` to `npi` plus a validity window. That is a
   source-data change first and a code change second.
@@ -996,6 +1002,98 @@ Until then the metric would manufacture confidence rather than measure anything.
 | Claims per month | Deferred — depends on ADR-013's declared-UTC assumption in a way the others do not, since month boundaries move with the zone |
 
 
+---
+
+### ADR-017: Full recompute, staged output, and inputs identified by digest
+
+**Date:** 2026-08-25 · **Status:** Accepted · **Resolves:** OQ-09 · **Amends:** ADR-014
+
+**Context.** Four questions were tangled together under "are re-runs idempotent?", and
+they have different answers. Separating them was most of the work:
+
+1. Does a run rebuild everything, or process a delta?
+2. What does a re-run do to the output directory?
+3. What does a run that fails its own quality gate leave behind?
+4. How do you tell whether two disagreeing runs saw the same input?
+
+Question 4 surfaced a defect: **ADR-014 states that "the manifest records a digest of the
+pharmacy file used", and it did not.** The promise had been written and never implemented.
+That is the failure mode ADR-007 exists to prevent, appearing in a document rather than in
+code — and it is why this ADR amends ADR-014 rather than merely citing it.
+
+**Decision.**
+
+**1. Full recompute. No state between runs.** Every run reads every file it is given and
+rebuilds every output. There is no watermark, no processed-files list, nothing to corrupt
+or to get subtly out of step with reality.
+
+The cost is explicit rather than hidden: **the operator must supply the complete history
+every run.** A delta run over only new revert files will report `claim_not_found` for
+reverts whose claims live in files that were not passed — correctly, because from that
+run's point of view the claim genuinely does not exist. Late-arriving reverts are handled
+by re-running over everything, which is cheap at this scale (69 ms for 27,076 records) and
+is the only approach that keeps reproducibility free.
+
+**2. Outputs are staged and swapped.** A run writes to `<out>.staging` and renames it into
+place only when it completes. `out/` is therefore always either the previous complete run
+or this one — **never a mixture**.
+
+It is two renames, not one, because a directory cannot be renamed over a non-empty
+directory. That leaves a brief window in which `out/` does not exist, and that is the
+intended trade: the failure mode becomes an obviously missing directory beside
+`out.previous`, rather than a directory holding half of one run and half of another. A
+crash leaves the previous output untouched and the partial work in `<out>.staging` for
+inspection.
+
+**3. A run that exceeds `--max-reject-rate` writes quarantine and manifest, and no
+metrics.** The threshold is checked *before* the metrics are computed. You still get
+everything needed to diagnose — the rejected records, the reason counts, the rate — and
+you cannot accidentally consume numbers produced by a run that failed its own quality
+gate. The manifest carries `status: "failed_reject_threshold"` and a
+`metrics_skipped_reason` saying so in words.
+
+An exit code is easy to ignore in a cron job that only checks whether files appeared. An
+absent metrics file is not.
+
+**4. Every input file is hashed as it is read.** The manifest records `sha256` and byte
+count per file, plus a single `inputs_digest` over the whole set. Hashing happens on the
+bytes already in hand, so it costs no second pass. The digest covers path as well as
+content, deliberately: the same bytes in a different file is not the same run, because
+record indices — and therefore the quarantine files — differ.
+
+This gives one testable invariant: **two runs with the same `inputs_digest` must produce
+byte-identical outputs.** When numbers disagree, that turns an argument into a diff.
+
+**Consequences.**
+
+- `read == accepted + rejected + excluded` and byte-identical reruns both survive, because
+  nothing carries state between runs.
+- The manifest's `schema_version` goes to `2`. Every change is additive (`status`,
+  `inputs_digest`, `input_files`, `recompute_model`, `metrics_skipped_reason`), so ADR-005
+  holds — the version bump is the signal, not a break.
+- **ADR-014's digest promise is now met, and exceeded**: every input is hashed, not only
+  the pharmacy file. ADR-014's stated worry — reference data changing silently rewrites
+  history — is covered, and so are the cases it did not anticipate.
+- Disk: a committed run momentarily holds two copies of the output. Trivial at this size,
+  and worth naming for the day it is not.
+- The scale trigger for revisiting decision 1 is stated rather than left to feel: when a
+  full run stops fitting in the window it is scheduled in, or when a single input file
+  stops fitting in memory (the limitation ADR-009 already names). Neither is close.
+
+**Alternatives considered.**
+
+| Option | Verdict |
+|---|---|
+| Incremental with watermark state | Rejected — the fastest option and the only one that contradicts charter §1.3.4: re-runs stop being reproducible. Worth revisiting only when the scale trigger above fires |
+| Full recompute plus a `--known-claims` side input | Rejected for now — a real middle ground that lets a delta run resolve reverts against a prior run's claim index. It adds an input contract to version and keep honest, for a problem this scale does not have. The reversal condition is the same scale trigger |
+| Overwrite `out/` in place | Rejected — a crashed run leaves partial files indistinguishable from good ones, which a downstream consumer discovers by reading a truncated CSV |
+| Versioned `out/run-<id>/` with a `latest` pointer | Rejected for now — pairs well with input digests and enables diffing runs directly, but needs a retention policy nobody has asked for. `inputs_digest` already answers "did these two runs see the same thing" without keeping both |
+| Write everything on failure, exit non-zero | Rejected — `out/` looks complete, and an exit code is easy to ignore |
+| Write nothing on failure | Rejected — discards the quarantine file, which is the one artifact that explains the failure |
+| Digest only the pharmacy file, as ADR-014 said | Rejected — the marginal cost of hashing the rest is zero once bytes are in hand, and claims files change far more often than reference data |
+| No digest, amend ADR-014 to drop the claim | Rejected — the promise was the right instinct; it was the implementation that was missing |
+
+
 ## 4. Open Questions
 
 Every one of these is a decision **not yet made**. Recording them as questions rather
@@ -1018,13 +1116,14 @@ decided, and it changes as evidence arrives.
 | ~~5~~ | ~~**F-01 + F-02 + F-04** — spec~~ | **Specified in session 005**: three feature files, 41 Gherkin scenarios, three Conflict Checks. |
 | ~~6~~ | ~~**F-01 + F-02 + F-04** — implementation~~ | **Done in session 006.** 115 deterministic tests, 7 system-tier, `make check` green, the sample data reproduces PMA §2.4 exactly. |
 | ~~7~~ | ~~**OQ-06, OQ-08** — the metric set~~ | **Resolved by ADR-015 and ADR-016** (session 007). Four metrics ship; one candidate rejected with a measurement. |
-| **1** | **OQ-09** — idempotency and late-arriving reverts | The last open engineering question. The pipeline is full-recompute today and reruns are byte-identical (tested); this makes that a decision rather than an accident. |
-| **2** | **OQ-09** — idempotency and late-arriving reverts | The last genuinely open engineering question. ADR-014's "the reference file is an input" already leans full-recompute; this makes it explicit. |
-| **3** | **OQ-06, OQ-08** — the metric set and the unit-price definition | Cheapest to change, and ADR-008 gives them a place to live. Decided with F-03 and F-04 in hand. |
-| **4** | **OQ-12** — deployment and ownership model | Prose in the README, written once the system it describes exists. |
+| ~~8~~ | ~~**OQ-09** — idempotency and late-arriving reverts~~ | **Resolved by ADR-017** (session 008). It also caught an ADR-014 promise the code never kept, and fixed it. |
+| **1** | **OQ-12** — deployment and ownership model | The only thing left. Prose in the README about where this runs, who owns which layer, and how a business user requests a metric — not infrastructure nobody asked for. |
 
-**Every decision that shapes the code is now made.** What remains is one engineering question
-(OQ-09), the metric set itself (OQ-06, OQ-08 — cheap to change by construction), and prose.
+**Every decision that shapes the code is now made.** What remains is prose.
+
+*(This table carried a duplicate OQ-09 row for two sessions, from an edit that appended
+instead of replacing. Noted rather than silently tidied — the PMA is only trustworthy if
+its own defects are visible.)*
 
 > **Correction (session 002).** Session 001 recorded OQ-01 as the next action. That was
 > the wrong order: the engine choice is downstream of the extension surface, not upstream
@@ -1049,10 +1148,10 @@ Numbers are **not** reserved for unwritten ADRs — see the note under the ADR i
 | OQ-06 | Which metrics beyond the required set? | `metrics/` | **Resolved — ADR-016** |
 | OQ-07 | How do agents extend this without reading ingestion code? | the whole shape of `metrics/` | **Resolved — ADR-008, ADR-010** |
 | OQ-08 | How is unit price defined? | `metrics/` | **Resolved — ADR-015** |
-| OQ-09 | Are re-runs idempotent? What about late-arriving files? | the runner | Open — *last open engineering question* |
+| OQ-09 | Are re-runs idempotent? What about late-arriving files? | the runner | **Resolved — ADR-017** |
 | OQ-10 | What do the naive timestamps mean? | any time-bucketed metric | **Resolved — ADR-013** |
 | OQ-11 | Is pharmacy reference data point-in-time or current-state? | the pharmacy join | **Resolved — ADR-014** |
-| OQ-12 | Deployment, orchestration and team ownership model? | README prose only | Open |
+| OQ-12 | Deployment, orchestration and team ownership model? | README prose only | Open — *the only one left* |
 
 ---
 
@@ -1132,7 +1231,7 @@ materially. The second weights by quantity and is usually what "average price pa
 means commercially; the first treats every fill equally. Whichever is chosen must be
 named in the output field itself, not in a footnote.
 
-**OQ-09 — Are re-runs idempotent? What about late-arriving files?**
+**OQ-09 — Are re-runs idempotent? What about late-arriving files?** — **RESOLVED by [ADR-017](#adr-017-full-recompute-staged-output-and-inputs-identified-by-digest): full recompute, staged output, and every input hashed.** Retained below as the record of what the question was.
 The brief describes a *stream* of events split across many files. If reverts can arrive
 after the claim window has been aggregated, the pipeline is either full-recompute
 (simple, correct, re-reads everything) or incremental (fast, and now carries state,
@@ -1174,7 +1273,7 @@ says so and the Definition of Done in `CLAUDE.md` is satisfied.
 | F-02 | Domain model and revert resolution | `feature-02-revert-resolution.md` | ~~OQ-03, OQ-04, OQ-10, OQ-11~~ | **Done** — 11 scenarios |
 | F-03 | The exported metric set | `feature-03-metric-set.md` | ~~F-02, F-04, OQ-06, OQ-08~~ | **Done** — 4 metrics, 8 scenarios, figures asserted against an independent derivation |
 | F-04 | The metric registry (`@metric`, discovery, `METRICS.md` generation) | `feature-04-metric-registry.md` | ~~OQ-07~~, F-02 | **Done** — 13 scenarios. Shipped with F-01/F-02 and a real CLI caller (AP-11) |
-| F-05 | Output serialization and run manifest | `feature-05-outputs.md` | OQ-09 | **Done as part of F-01/F-04** — writers and `_manifest.json` ship; only OQ-09's idempotency question remains |
+| F-05 | Output serialization and run manifest | `feature-05-outputs.md` | ~~OQ-09~~ | **Done** — writers, staged output, manifest v2 with input digests |
 
 ---
 

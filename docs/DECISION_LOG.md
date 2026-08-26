@@ -536,3 +536,60 @@ engineering question. The pipeline is full-recompute today and reruns are byte-i
 proven by test — the ADR turns that from an accident into a decision, and states what
 happens when a revert arrives after the window it belongs to has already been aggregated.
 Then OQ-12, which is README prose about deployment and ownership, not code.
+
+---
+
+## Session 008 — 2026-08-25 — OQ-09 resolved, and an ADR caught not keeping its promise
+
+**Goal.** Answer the last open engineering question. It turned out to be four questions
+wearing one label, and separating them was most of the work.
+
+**The defect this session found.** ADR-014 states that *"the manifest records a digest of
+the pharmacy file used, so any two runs that disagree can be explained rather than argued
+about."* **It did not.** The manifest recorded directory paths only. The promise had been
+written in session 004 and never implemented.
+
+That is ADR-007's own thesis turned on itself for the second time in this project — a rule
+with no enforcement is followed until it isn't — except here the gap was in a *document*
+rather than in code, where no lint can see it. It is recorded as an amendment on ADR-014
+rather than quietly fixed, because a PMA is only trustworthy if its own defects are
+visible.
+
+**ADR-017 — four decisions.**
+
+| # | Decision | Why not the alternative |
+|---|---|---|
+| 1 | Full recompute, no state between runs | Incremental is faster and is the only option that contradicts charter §1.3.4 — re-runs stop being reproducible. The cost of full recompute is stated: the operator must pass the complete history, or a late revert is correctly reported as `claim_not_found` |
+| 2 | Stage output, then swap | Overwriting in place leaves a crashed run's partial files indistinguishable from good ones. Two renames leave a window where `out/` is missing — deliberately, because an obviously absent directory beats a directory holding half of two runs |
+| 3 | A failed run writes quarantine and manifest, no metrics | An exit code is easy to ignore in a cron job that only checks whether files appeared. An absent metrics file is not |
+| 4 | Hash every input file, plus one combined `inputs_digest` | ADR-014 asked for the pharmacy file only. Once the bytes are in hand the marginal cost of the rest is zero, and claims files change far more often than reference data |
+
+Decision 4 buys a testable invariant: **same `inputs_digest` → byte-identical outputs**,
+now asserted in both tiers.
+
+**Implementation notes.**
+
+- Hashing happens on the same buffer that is parsed, so it costs no second pass over the
+  input. A file that fails to decode is still hashed — knowing exactly which bytes failed
+  is the point.
+- The digest covers path as well as content, deliberately: the same bytes in a different
+  file is not the same run, because record indices and therefore the quarantine files
+  differ.
+- The threshold check moved *above* the metric computation. That is the whole of decision 3
+  — the ordering is the mechanism.
+- Manifest `schema_version` goes to 2. Every field added is additive, so ADR-005 holds; the
+  bump is the signal, not a break.
+
+**A second self-inflicted defect, also recorded.** The decision-order table in the PMA had
+carried a **duplicate OQ-09 row for two sessions**, from an edit that appended where it
+should have replaced. Fixed, and noted in the table itself.
+
+**Verification.** `make check` green: 4 feature files / 49 scenarios, catalogue matches the
+registry, mypy strict over 40 files, 110 unit + 52 acceptance tests. `make test-system`
+green: 14 tests, including two runs of the sample data agreeing on `inputs_digest`.
+
+**Next action.** **OQ-12 — deployment and ownership.** The last open question, and the only
+one that is prose rather than code: where this runs, who owns `gateway/` versus `metrics/`,
+how a business user requests a new metric, and how outputs are versioned and published. The
+brief explicitly invites assumptions about working in a multidisciplinary team, so this is
+answered in the README rather than by building infrastructure nobody asked for.

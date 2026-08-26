@@ -42,9 +42,26 @@ caught, at spec time, that `json.load` converts numbers to `float` before any co
 wrap them in `Decimal` — a bug that would have produced correct-looking money that was
 quietly wrong.
 
-One open question remains: whether re-runs stay full-recompute (OQ-09). They are today,
-and reruns are byte-identical — the ADR would make that a decision rather than an
-accident.
+### Re-running it
+
+Every run is a **full recompute** — it reads every file it is given and rebuilds every
+output, with no state carried between runs. That is what makes reproducibility free, and
+the cost is stated rather than hidden: you must pass the complete history each time, or a
+revert whose claim sits in a file you left out is correctly reported as `claim_not_found`.
+
+Outputs are **staged and swapped**: the run writes to `out.staging` and renames it into
+place only on completion, so `out/` is either the previous complete run or this one, never
+a mixture. A run that exceeds `--max-reject-rate` writes the quarantine files and the
+manifest but **no metrics** — you get everything needed to diagnose, and cannot accidentally
+consume numbers from a run that failed its own quality gate.
+
+Every input file is hashed as it is read. The manifest carries a `sha256` per file and one
+`inputs_digest` over the whole set, which gives a testable invariant: **two runs with the
+same `inputs_digest` produce byte-identical outputs.** When two people's numbers disagree,
+that turns an argument into a diff.
+
+The only question still open is OQ-12 — how this would be deployed and owned in a
+multidisciplinary team, which is README prose rather than code.
 
 ## Quick start
 
