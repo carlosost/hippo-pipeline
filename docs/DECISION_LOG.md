@@ -694,3 +694,45 @@ and a gigabyte-scale rootfs tar against a fixed disk allowance is a poor trade f
 answer.
 
 **Next action.** Still none. The correction is recorded; the project remains complete.
+
+### Session 010 addendum — pre-ship verification
+
+Ran the reviewer's exact path, on a fresh clone of `HEAD` with no environment overrides:
+
+```
+git clone <repo> && make setup && make check && make run ARGS="..." && make test-system
+```
+
+All green. The README's three documented commands (`run`, `metrics`, `catalog`) work
+verbatim. This mattered: every previous run used a virtualenv outside the repository with
+`UV_LINK_MODE`, `MYPY_CACHE_DIR` and `PYTEST_ADDOPTS` overrides, so the default
+`make setup` path — the only one a reviewer will use — had never actually been exercised.
+It is the same AP-13 shape as the Dockerfile: the tests passing is not evidence that the
+entry point somebody else uses works.
+
+**CI's Python 3.12 job had never run.** The workflow declares a `[3.10, 3.12]` matrix and
+every test to date had run on 3.10 only. Installed 3.12.13 and ran the deterministic tier
+there: 162 tests, all passing. The matrix is now a verified claim rather than an aspiration.
+
+**Two prose defects found and fixed, plus the gap that allowed them.**
+
+- Five broken in-page anchors in the PMA's own ADR index — `≥` in ADR-002's heading, an em
+  dash in ADR-012's, and a link whose text did not match its heading. Every `#adr-` link is
+  now recomputed from the actual heading rather than hand-written.
+- `.gitignore` carried `!.env.example` for a file that does not and should not exist: this
+  pipeline holds no credentials. The lines are now a guard for the day that changes, with
+  the reasoning inline, rather than a promise of a missing file.
+
+**`scripts/check_doc_links.py` added to `make lint` and CI.** The retrospective's sharpest
+finding was that this project built four lint checks for code and none for prose, and then
+shipped an ADR promising behaviour the code never had. Dead anchors in the index are the
+same defect in a smaller form. Documentation now has a lint: every relative file link
+resolves, and every in-page anchor matches a real heading. Fenced code blocks are ignored,
+and the three inherited documents — the brief and the two playbooks — are skipped, because
+they came from outside this repository and are not ours to correct.
+
+`LICENSE` added: `pyproject.toml` declared MIT and no such file existed, which is the same
+class of unbacked claim. Change or drop both together if MIT is not intended.
+
+**Verification.** `make check` green on the working tree and on a fresh clone; 3.10 and
+3.12 both green; `make test-system` green.

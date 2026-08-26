@@ -152,9 +152,9 @@ Numbering is sequential and permanent. A superseded ADR keeps its number, is mar
 | ADR | Title | Status |
 |---|---|---|
 | [ADR-001](#adr-001-this-document-is-the-source-of-truth-spec-driven-development) | This document is the source of truth (spec-driven development) | Accepted |
-| [ADR-002](#adr-002-python--310-with-uv-as-the-toolchain) | Python ≥3.10 with uv as the toolchain | Accepted |
+| [ADR-002](#adr-002-python-310-with-uv-as-the-toolchain) | Python ≥3.10 with uv as the toolchain | Accepted |
 | [ADR-003](#adr-003-layered-package-with-a-single-io-chokepoint) | Layered package with a single IO chokepoint | Accepted |
-| [ADR-004](#adr-004-two-tier-tests-with-acceptance-criteria-written-first) | Two-tier tests, acceptance criteria written first | Accepted |
+| [ADR-004](#adr-004-two-tier-tests-acceptance-criteria-written-first) | Two-tier tests, acceptance criteria written first | Accepted |
 | [ADR-005](#adr-005-output-contracts-are-additive-only) | Output contracts are additive only | Accepted |
 | [ADR-006](#adr-006-trunk-based-development-with-conventional-commits) | Trunk-based development with Conventional Commits | Accepted |
 | [ADR-007](#adr-007-the-repository-is-an-agent-contract-enforced-by-tooling) | The repository is an agent contract, enforced by tooling | Accepted (amended) |
@@ -162,7 +162,7 @@ Numbering is sequential and permanent. A superseded ADR keeps its number, is mar
 | [ADR-009](#adr-009-the-python-standard-library-is-the-compute-engine-zero-runtime-dependencies) | The Python standard library is the compute engine; zero runtime dependencies | Accepted |
 | [ADR-010](#adr-010-no-metric-definition-language-no-mcp-server-no-semantic-layer) | No metric definition language, no MCP server, no semantic layer | Accepted (amended: no LLM framework either) |
 | [ADR-011](#adr-011-malformed-records-are-quarantined-out-of-scope-records-are-excluded-separately) | Malformed records are quarantined; out-of-scope records are excluded separately | Accepted (amended) |
-| [ADR-012](#adr-012-revert-resolution--a-claim-is-reverted-at-most-once-keyed-on-claim_id) | Revert resolution — a claim is reverted at most once, keyed on `claim_id` | Accepted |
+| [ADR-012](#adr-012-revert-resolution-a-claim-is-reverted-at-most-once-keyed-on-claim_id) | Revert resolution — a claim is reverted at most once, keyed on `claim_id` | Accepted |
 | [ADR-013](#adr-013-all-timestamps-are-interpreted-as-utc-and-the-assumption-is-published) | All timestamps are interpreted as UTC, and the assumption is published | Accepted |
 | [ADR-014](#adr-014-pharmacy-reference-data-is-current-state-not-point-in-time) | Pharmacy reference data is current-state, not point-in-time | Accepted |
 | [ADR-015](#adr-015-unit-price-is-quantity-weighted-by-default-and-every-metric-states-its-formula) | Unit price is quantity-weighted by default, and every metric states its formula | Accepted |
@@ -1269,7 +1269,7 @@ to a rejects sink with the reason and the source file, and report counts alongsi
 results. Whichever is chosen, the rejected count must appear in the output, because a
 number that changed because records vanished is a number nobody can trust.
 
-**OQ-03 — What exactly does a revert invalidate?** — **RESOLVED by [ADR-012](#adr-012-revert-resolution--a-claim-is-reverted-at-most-once-keyed-on-claim_id).** Retained below as the record of what the question was.
+**OQ-03 — What exactly does a revert invalidate?** — **RESOLVED by [ADR-012](#adr-012-revert-resolution-a-claim-is-reverted-at-most-once-keyed-on-claim_id).** Retained below as the record of what the question was.
 Three concrete cases the sample forces: (a) 2 reverts are timestamped *before* the claim
 they cancel — honour or reject? (b) 45 reverts point at claims of an out-of-scope NPI —
 they must vanish with those claims, but must the count of "reverts processed" say so?
@@ -1277,7 +1277,7 @@ they must vanish with those claims, but must the count of "reverts processed" sa
 unknown is unexercised and must be decided anyway — the claim may simply be in a file
 that has not arrived yet (see OQ-09).
 
-**OQ-04 — Is a revert `id` an identity?** — **RESOLVED by [ADR-012](#adr-012-revert-resolution--a-claim-is-reverted-at-most-once-keyed-on-claim_id): it is not. The reversal key is `claim_id`.** Retained below as the record of what the question was.
+**OQ-04 — Is a revert `id` an identity?** — **RESOLVED by [ADR-012](#adr-012-revert-resolution-a-claim-is-reverted-at-most-once-keyed-on-claim_id): it is not. The reversal key is `claim_id`.** Retained below as the record of what the question was.
 Three revert ids each appear twice with *different* timestamps. So the same id denotes
 two different events, and neither obvious policy is free: deduplicating on `id`
 discards a real record; not deduplicating counts one reversal twice. Options: treat

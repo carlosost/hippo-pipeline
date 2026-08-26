@@ -21,10 +21,11 @@ venv/
 htmlcov/
 coverage.xml
 
-# --- Secrets (ADR-007): .env.example IS committed, .env is never committed ---
+# --- Secrets ---
+# The pipeline reads files and writes files; it holds no credentials (docs/OPERATIONS.md 8).
+# These lines are a guard for the day that changes, not a promise that a .env.example exists.
 .env
 .env.*
-!.env.example
 
 # --- Pipeline outputs & quarantine (regenerated, never reviewed as source) ---
 out/

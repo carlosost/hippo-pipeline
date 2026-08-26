@@ -17,6 +17,7 @@ lint:  ## Ruff + architectural constraint lint (ADR-003)
 	bash scripts/check_fixture_integrity.sh
 	uv run python scripts/check_gherkin.py
 	bash scripts/check_catalog.sh
+	uv run python scripts/check_doc_links.py
 
 typecheck:  ## mypy strict
 	uv run mypy
