@@ -11,8 +11,15 @@ Three properties follow, and they are the reason the boundary exists:
   - observability: tracing, timeouts and structured logging are injected once, here
 """
 
-from hippo_pipeline.gateway.reader import IngestCounts, IngestResult, ingest
+from hippo_pipeline.gateway.reader import (
+    IngestCounts,
+    IngestResult,
+    InputFile,
+    ingest,
+)
 from hippo_pipeline.gateway.writer import (
+    begin_staged_output,
+    commit_staged_output,
     write_excluded_reverts,
     write_manifest,
     write_quarantine,
@@ -23,6 +30,9 @@ from hippo_pipeline.gateway.writer import (
 __all__ = [
     "IngestCounts",
     "IngestResult",
+    "InputFile",
+    "begin_staged_output",
+    "commit_staged_output",
     "ingest",
     "write_excluded_reverts",
     "write_manifest",

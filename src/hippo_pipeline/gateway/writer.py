@@ -15,12 +15,16 @@ from __future__ import annotations
 
 import csv
 import json
+import shutil
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
 from hippo_pipeline.domain.models import ExcludedRevert, QuarantinedRecord
+
+STAGING_SUFFIX = ".staging"
+PREVIOUS_SUFFIX = ".previous"
 
 QUARANTINE_COLUMNS = ("source_file", "record_index", "reasons", "raw")
 EXCLUDED_REVERT_COLUMNS = (
@@ -134,3 +138,44 @@ def write_excluded_reverts(out_dir: str, name: str, records: Sequence[ExcludedRe
             for e in records
         ],
     )
+
+
+def begin_staged_output(out_dir: str) -> str:
+    """Start a run's output in a staging directory beside the target (ADR-017).
+
+    Returns the path everything should be written to. Any leftover staging from a crashed
+    previous run is discarded first - a partial directory is never reused, because reusing
+    one is how a stale file survives into a fresh run.
+    """
+    staging = Path(out_dir + STAGING_SUFFIX)
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+    return str(staging)
+
+
+def commit_staged_output(out_dir: str) -> None:
+    """Swap the staging directory into place, replacing any previous output.
+
+    Two renames rather than one, because a directory cannot be renamed over a non-empty
+    directory. That leaves a brief window in which `out/` does not exist - and that is the
+    point: the failure mode is an obviously missing directory next to `out.previous`,
+    never a directory holding half of one run and half of another.
+
+    Not called when the run raises, so a crash leaves the previous complete output intact
+    and the partial work in `<out>.staging` for inspection.
+    """
+    target = Path(out_dir)
+    staging = Path(out_dir + STAGING_SUFFIX)
+    previous = Path(out_dir + PREVIOUS_SUFFIX)
+
+    if not staging.exists():  # pragma: no cover - defensive; commit follows begin
+        raise FileNotFoundError(f"nothing staged at {staging}")
+
+    if previous.exists():
+        shutil.rmtree(previous)
+    if target.exists():
+        target.rename(previous)
+    staging.rename(target)
+    if previous.exists():
+        shutil.rmtree(previous)

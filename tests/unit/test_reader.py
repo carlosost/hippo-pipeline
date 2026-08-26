@@ -200,3 +200,40 @@ def test_a_rejected_claims_id_is_remembered_so_its_reverts_can_be_diagnosed(dirs
     dirs.claims([valid_claim_record(id="C-BAD", quantity=0)])
 
     assert ingest(*dirs.args).quarantined_claim_ids == frozenset({"C-BAD"})
+
+
+# ------------------------------------------------------------ input digests --
+def test_every_input_file_is_hashed_as_it_is_read(dirs):
+    dirs.claims([valid_claim_record()])
+    dirs.reverts([{"id": "R1", "claim_id": "C1", "timestamp": "2026-02-02T09:00:00"}])
+
+    result = ingest(*dirs.args)
+
+    assert len(result.inputs) == 3  # one pharmacy csv, one claims json, one reverts json
+    assert all(len(f.sha256) == 64 for f in result.inputs)
+    assert all(f.bytes > 0 for f in result.inputs)
+    assert [f.path for f in result.inputs] == sorted(f.path for f in result.inputs)
+
+
+def test_the_combined_digest_is_stable_across_runs(dirs):
+    dirs.claims([valid_claim_record()])
+
+    assert ingest(*dirs.args).inputs_digest == ingest(*dirs.args).inputs_digest
+
+
+def test_the_combined_digest_changes_when_any_input_changes(dirs):
+    dirs.claims([valid_claim_record(id="C1")])
+    before = ingest(*dirs.args).inputs_digest
+
+    dirs.claims([valid_claim_record(id="C2")])
+
+    assert ingest(*dirs.args).inputs_digest != before
+
+
+def test_an_unparseable_file_is_still_hashed(dirs):
+    """Knowing exactly which bytes failed is the point of recording the digest."""
+    dirs.claims("{not json", name="broken.json")
+
+    result = ingest(*dirs.args)
+
+    assert any(f.path.endswith("broken.json") for f in result.inputs)

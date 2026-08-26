@@ -19,6 +19,8 @@ from hippo_pipeline import __version__
 from hippo_pipeline.domain.models import Dataset
 from hippo_pipeline.domain.resolution import resolve_reverts
 from hippo_pipeline.gateway import (
+    begin_staged_output,
+    commit_staged_output,
     ingest,
     write_excluded_reverts,
     write_manifest,
@@ -26,7 +28,13 @@ from hippo_pipeline.gateway import (
     write_table,
     write_text,
 )
-from hippo_pipeline.metrics import discover, registered, render_catalog, run_all
+from hippo_pipeline.metrics import (
+    MetricOutput,
+    discover,
+    registered,
+    render_catalog,
+    run_all,
+)
 
 DEFAULT_MAX_REJECT_RATE = 0.01
 
@@ -73,34 +81,57 @@ def run_pipeline(
     out_dir: str,
     max_reject_rate: float,
 ) -> int:
-    """Read, resolve, aggregate, write. The whole pipeline, in one readable sequence."""
+    """Read, resolve, aggregate, write. The whole pipeline, in one readable sequence.
+
+    Two ordering decisions from ADR-017 are visible here and are not accidental:
+
+      - the reject threshold is checked **before** metrics are computed, so a run that
+        fails its own quality gate cannot leave numbers behind for someone to consume
+      - everything is written to a staging directory and swapped in at the end, so `out/`
+        is either the previous complete run or this one, never a mixture
+    """
     discover()
 
     ingested = ingest(pharmacy_dirs, claim_dirs, revert_dirs)
     resolution = resolve_reverts(ingested.claims, ingested.reverts, ingested.quarantined_claim_ids)
-    dataset = Dataset(
-        claims=resolution.claims,
-        reverts=ingested.reverts,
-        pharmacies=ingested.pharmacies,
-    )
-
-    outputs = run_all(dataset)
-    for output in outputs:
-        write_table(out_dir, output.name, output.columns, output.rows)
-
-    write_quarantine(out_dir, "_rejected", ingested.rejected)
-    write_quarantine(out_dir, "_excluded", ingested.excluded)
-    write_excluded_reverts(out_dir, "_excluded_reverts", resolution.excluded)
-
     counts = ingested.counts
+    over_threshold = counts.reject_rate > max_reject_rate
+
+    staging = begin_staged_output(out_dir)
+
+    # Quarantine is written on both paths: it is the one thing that explains a failure.
+    write_quarantine(staging, "_rejected", ingested.rejected)
+    write_quarantine(staging, "_excluded", ingested.excluded)
+    write_excluded_reverts(staging, "_excluded_reverts", resolution.excluded)
+
+    outputs: tuple[MetricOutput, ...] = ()
+    if not over_threshold:
+        dataset = Dataset(
+            claims=resolution.claims,
+            reverts=ingested.reverts,
+            pharmacies=ingested.pharmacies,
+        )
+        outputs = run_all(dataset)
+        for output in outputs:
+            write_table(staging, output.name, output.columns, output.rows)
+
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "status": "failed_reject_threshold" if over_threshold else "ok",
         "time_basis": "UTC (assumed; source carries no offset)",
+        "recompute_model": "full (ADR-017): every run rebuilds every output from every "
+        "file it is given; no state is carried between runs",
         "inputs": {
             "pharmacies": list(pharmacy_dirs),
             "claims": list(claim_dirs),
             "reverts": list(revert_dirs),
         },
+        # Two runs with the same inputs_digest saw byte-identical inputs and must produce
+        # byte-identical outputs. This is what turns "our numbers disagree" into a diff.
+        "inputs_digest": ingested.inputs_digest,
+        "input_files": [
+            {"path": f.path, "sha256": f.sha256, "bytes": f.bytes} for f in ingested.inputs
+        ],
         # Two stages exclude records, so the manifest reports them separately. Lumping
         # them together would give a number that no stated identity accounts for, and an
         # unexplainable total is the thing this pipeline exists to avoid.
@@ -127,8 +158,15 @@ def run_pipeline(
         "by_reason": {**counts.by_reason, **resolution.counts},
         "by_file": counts.by_file,
         "metrics": [o.name for o in outputs],
+        "metrics_skipped_reason": (
+            "reject rate exceeded --max-reject-rate; metrics are not computed for a run "
+            "that failed its own quality gate (ADR-017)"
+        )
+        if over_threshold
+        else None,
     }
-    write_manifest(out_dir, manifest)
+    write_manifest(staging, manifest)
+    commit_staged_output(out_dir)
 
     print(
         f"read {counts.read}  accepted {counts.accepted}  rejected {counts.rejected}  "
@@ -136,15 +174,17 @@ def run_pipeline(
     )
     for code, total in sorted({**counts.by_reason, **resolution.counts}.items()):
         print(f"  {code}: {total}")
-    print(f"wrote {len(outputs)} metric(s) to {out_dir}/")
 
-    if counts.reject_rate > max_reject_rate:
+    if over_threshold:
         print(
             f"FAILED: reject rate {counts.reject_rate:.4%} exceeds "
-            f"{max_reject_rate:.4%}. Inspect {out_dir}/_rejected.csv",
+            f"{max_reject_rate:.4%}. No metrics were written. "
+            f"Inspect {out_dir}/_rejected.csv",
             file=sys.stderr,
         )
         return EXIT_TOO_MANY_REJECTS
+
+    print(f"wrote {len(outputs)} metric(s) to {out_dir}/")
     return EXIT_OK
 
 

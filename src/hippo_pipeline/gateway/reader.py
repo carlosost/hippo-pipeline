@@ -13,6 +13,7 @@ intercept the token itself.
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -30,6 +31,44 @@ from hippo_pipeline.domain.models import (
 
 CLAIM_FIELDS = ("id", "npi", "ndc", "price", "quantity", "timestamp")
 REVERT_FIELDS = ("id", "claim_id", "timestamp")
+
+
+@dataclass(frozen=True, slots=True)
+class InputFile:
+    """One input file and its content digest (ADR-017).
+
+    Two runs with the same `inputs_digest` saw byte-identical inputs and must therefore
+    produce byte-identical outputs. When two runs disagree, this is what turns an argument
+    into a diff.
+    """
+
+    path: str
+    sha256: str
+    bytes: int
+
+
+class _Digests:
+    """Collects a digest per file as it is read, so hashing costs no extra pass."""
+
+    def __init__(self) -> None:
+        self._files: dict[str, InputFile] = {}
+
+    def record(self, path: Path, data: bytes) -> None:
+        self._files[str(path)] = InputFile(
+            path=str(path), sha256=hashlib.sha256(data).hexdigest(), bytes=len(data)
+        )
+
+    def files(self) -> tuple[InputFile, ...]:
+        return tuple(self._files[key] for key in sorted(self._files))
+
+    def combined(self) -> str:
+        """One digest for the whole input set: sha256 over each file's path and digest.
+
+        Path is included deliberately. Two runs over the same bytes in different files are
+        not the same run - record indices, and therefore the quarantine files, differ.
+        """
+        joined = "\n".join(f"{f.path}:{f.sha256}" for f in self.files())
+        return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +118,8 @@ class IngestResult:
     excluded: tuple[QuarantinedRecord, ...]
     counts: IngestCounts
     quarantined_claim_ids: frozenset[str]
+    inputs: tuple[InputFile, ...]
+    inputs_digest: str
 
 
 # --------------------------------------------------------------- file access --
@@ -97,15 +138,25 @@ def _files(dirs: Sequence[str], suffix: str) -> list[Path]:
     return sorted(found)
 
 
-def _json_records(path: Path) -> tuple[list[object] | None, str | None]:
-    """Return the array in `path`, or None plus the reason it could not be read."""
+def _json_records(path: Path, digests: _Digests) -> tuple[list[object] | None, str | None]:
+    """Return the array in `path`, or None plus the reason it could not be read.
+
+    Reads bytes once: the digest is taken from the same buffer that is parsed, so hashing
+    adds no second pass over the input. A file that cannot be decoded is still hashed -
+    knowing exactly which bytes failed is the point.
+    """
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None, reasons.FILE_UNPARSEABLE
+    digests.record(path, data)
     try:
         payload = json.loads(
-            path.read_text(encoding="utf-8"),
+            data.decode("utf-8"),
             parse_float=Decimal,
             parse_int=Decimal,
         )
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+    except (UnicodeDecodeError, json.JSONDecodeError):
         return None, reasons.FILE_UNPARSEABLE
     if not isinstance(payload, list):
         # A valid JSON document of the wrong shape is unusable in exactly the same way.
@@ -166,10 +217,12 @@ def _raw(record: object) -> str:
 
 
 # ------------------------------------------------------------------- records --
-def _elements(paths: Sequence[Path]) -> Iterator[tuple[Path, int, object, str | None]]:
+def _elements(
+    paths: Sequence[Path], digests: _Digests
+) -> Iterator[tuple[Path, int, object, str | None]]:
     """Yield (file, index, record, file_level_reason) for every element of every file."""
     for path in paths:
-        payload, failure = _json_records(path)
+        payload, failure = _json_records(path, digests)
         if payload is None:
             yield path, 0, None, failure
             continue
@@ -177,13 +230,18 @@ def _elements(paths: Sequence[Path]) -> Iterator[tuple[Path, int, object, str | 
             yield path, index, record, None
 
 
-def _read_pharmacies(dirs: Sequence[str]) -> dict[str, Pharmacy]:
+def _read_pharmacies(dirs: Sequence[str], digests: _Digests) -> dict[str, Pharmacy]:
     """Reference data. Columns by NAME - the sample file's header is `chain,npi`."""
     pharmacies: dict[str, Pharmacy] = {}
     for path in _files(dirs, ".csv"):
         try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+            data = path.read_bytes()
+        except OSError:
+            continue
+        digests.record(path, data)
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
             continue
         for row in csv.DictReader(text.splitlines()):
             npi = (row.get("npi") or "").strip()
@@ -273,7 +331,8 @@ def ingest(
     simply not ours. One sink for both would report a 15% defect rate for a source whose
     real defect rate is three orders of magnitude lower.
     """
-    pharmacies = _read_pharmacies(pharmacy_dirs)
+    digests = _Digests()
+    pharmacies = _read_pharmacies(pharmacy_dirs, digests)
 
     claims: list[Claim] = []
     reverts: list[Revert] = []
@@ -291,7 +350,7 @@ def ingest(
             by_reason[code] = by_reason.get(code, 0) + 1
         by_file[record.source_file] = by_file.get(record.source_file, 0) + 1
 
-    for path, index, record, file_failure in _elements(_files(claim_dirs, ".json")):
+    for path, index, record, file_failure in _elements(_files(claim_dirs, ".json"), digests):
         if file_failure is not None:
             files_unreadable += 1
             entry = QuarantinedRecord(path.name, index, (file_failure,), "")
@@ -320,7 +379,7 @@ def ingest(
 
         claims.append(claim)
 
-    for path, index, record, file_failure in _elements(_files(revert_dirs, ".json")):
+    for path, index, record, file_failure in _elements(_files(revert_dirs, ".json"), digests):
         if file_failure is not None:
             files_unreadable += 1
             entry = QuarantinedRecord(path.name, index, (file_failure,), "")
@@ -357,4 +416,6 @@ def ingest(
         excluded=tuple(excluded),
         counts=counts,
         quarantined_claim_ids=frozenset(quarantined_claim_ids),
+        inputs=digests.files(),
+        inputs_digest=digests.combined(),
     )

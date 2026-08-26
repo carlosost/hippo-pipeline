@@ -7,6 +7,8 @@ from decimal import Decimal
 
 from hippo_pipeline.domain.models import ExcludedRevert, QuarantinedRecord, Revert
 from hippo_pipeline.gateway import (
+    begin_staged_output,
+    commit_staged_output,
     write_excluded_reverts,
     write_manifest,
     write_quarantine,
@@ -103,3 +105,56 @@ def test_the_manifest_has_stable_key_order(tmp_path):
     write_manifest(str(tmp_path), {"b": 2, "a": 1})
 
     assert (tmp_path / "_manifest.json").read_text() == '{\n  "a": 1,\n  "b": 2\n}\n'
+
+
+# --------------------------------------------------------- staged output ----
+def test_a_committed_run_replaces_the_previous_one_entirely(tmp_path):
+    out = str(tmp_path / "out")
+
+    staging = begin_staged_output(out)
+    write_table(staging, "old", COLUMNS, [ROW])
+    commit_staged_output(out)
+
+    staging = begin_staged_output(out)
+    write_table(staging, "new", COLUMNS, [ROW])
+    commit_staged_output(out)
+
+    names = sorted(p.name for p in (tmp_path / "out").iterdir())
+    assert names == ["new.csv", "new.json"]  # nothing from the first run survives
+
+
+def test_nothing_is_left_beside_the_output_after_a_commit(tmp_path):
+    out = str(tmp_path / "out")
+
+    staging = begin_staged_output(out)
+    write_table(staging, "m", COLUMNS, [ROW])
+    commit_staged_output(out)
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["out"]
+
+
+def test_an_uncommitted_run_leaves_the_previous_output_untouched(tmp_path):
+    """The property that matters: out/ is never a mixture of two runs."""
+    out = str(tmp_path / "out")
+    staging = begin_staged_output(out)
+    write_table(staging, "good", COLUMNS, [ROW])
+    commit_staged_output(out)
+
+    # A second run starts and dies before committing.
+    staging = begin_staged_output(out)
+    write_table(staging, "partial", COLUMNS, [ROW])
+
+    assert sorted(p.name for p in (tmp_path / "out").iterdir()) == ["good.csv", "good.json"]
+
+
+def test_leftover_staging_from_a_crashed_run_is_discarded_not_reused(tmp_path):
+    out = str(tmp_path / "out")
+    staging = begin_staged_output(out)
+    write_table(staging, "stale", COLUMNS, [ROW])
+
+    staging = begin_staged_output(out)
+    write_table(staging, "fresh", COLUMNS, [ROW])
+    commit_staged_output(out)
+
+    names = sorted(p.name for p in (tmp_path / "out").iterdir())
+    assert names == ["fresh.csv", "fresh.json"]

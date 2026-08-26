@@ -195,3 +195,39 @@ def test_every_metric_writes_both_formats(run_output):
 
     manifest = json.loads((run_output / "_manifest.json").read_text())
     assert set(manifest["metrics"]) == expected
+
+
+def test_the_manifest_identifies_the_exact_sample_files(manifest):
+    """33 files: 28 claims, 4 reverts, 1 pharmacy csv (PMA 2.4)."""
+    assert len(manifest["input_files"]) == 33
+    assert len(manifest["inputs_digest"]) == 64
+    assert manifest["status"] == "ok"
+    assert manifest["recompute_model"].startswith("full (ADR-017)")
+
+
+def test_two_runs_over_the_sample_agree_on_the_input_digest(tmp_path):
+    digests = []
+    for name in ("a", "b"):
+        target = tmp_path / name
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "hippo_pipeline.cli",
+                "run",
+                "--pharmacies",
+                str(SAMPLE / "pharmacies"),
+                "--claims",
+                str(SAMPLE / "claims"),
+                "--reverts",
+                str(SAMPLE / "reverts"),
+                "--out",
+                str(target),
+            ],
+            check=True,
+            capture_output=True,
+            cwd=REPO_ROOT,
+        )
+        digests.append(json.loads((target / "_manifest.json").read_text())["inputs_digest"])
+
+    assert digests[0] == digests[1]
