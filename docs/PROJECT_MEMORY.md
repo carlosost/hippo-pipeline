@@ -8,7 +8,7 @@
 > Process: `docs/GENERAL_ENGINEERING_PLAYBOOK.md`. Agent contract: `CLAUDE.md`.
 > Session history: `docs/DECISION_LOG.md`.
 
-**Last updated:** 2026-08-25 (session 008) · **Phase:** complete — every engineering question closed. 17 ADRs; OQ-12 (deployment prose) is all that remains
+**Last updated:** 2026-08-25 (session 009) · **Phase:** **complete** — 18 ADRs, every open question closed, retrospective written
 
 ---
 
@@ -168,6 +168,7 @@ Numbering is sequential and permanent. A superseded ADR keeps its number, is mar
 | [ADR-015](#adr-015-unit-price-is-quantity-weighted-by-default-and-every-metric-states-its-formula) | Unit price is quantity-weighted by default, and every metric states its formula | Accepted |
 | [ADR-016](#adr-016-the-exported-metric-set) | The exported metric set | Accepted |
 | [ADR-017](#adr-017-full-recompute-staged-output-and-inputs-identified-by-digest) | Full recompute, staged output, and inputs identified by digest | Accepted |
+| [ADR-018](#adr-018-ownership-follows-the-layer-split-no-infrastructure-ships-in-this-repository) | Ownership follows the layer split; no infrastructure ships in this repository | Accepted |
 
 **On numbering.** Session 001 pre-assigned ADR numbers to decisions that had not been made
 (`OQ-07 → ADR-013`). That was a mistake: numbers are assigned when an ADR is *written*, and
@@ -1094,6 +1095,82 @@ byte-identical outputs.** When numbers disagree, that turns an argument into a d
 | No digest, amend ADR-014 to drop the claim | Rejected — the promise was the right instinct; it was the implementation that was missing |
 
 
+---
+
+### ADR-018: Ownership follows the layer split; no infrastructure ships in this repository
+
+**Date:** 2026-08-25 · **Status:** Accepted · **Resolves:** OQ-12
+
+**Context.** The brief asks for assumptions about how this would be deployed and how it
+would work in a company where teams are multidisciplinary and collaborate. Two things have
+to be decided: **who owns which code**, and **how much operational scaffolding belongs in
+this repository**.
+
+The second is the trap. A take-home that ships a Dockerfile, a Terraform module and an
+Airflow DAG looks thorough and is mostly wrong: every one of those encodes a platform
+decision that belongs to the team that already has a platform, and every one is the first
+thing thrown away on contact with reality.
+
+**Decision.**
+
+**1. Ownership follows the layer boundary from ADR-003.**
+
+| Layer | Owner |
+|---|---|
+| `gateway/` | Data engineering — the only code that knows about file formats and source quirks |
+| `domain/` | Data engineering and analytics jointly — the revert rules are business rules wearing code |
+| `metrics/` | Analytics engineering — one module and one test, no ingestion knowledge required |
+| `docs/METRICS.md` | Generated; owned by nobody, reviewed by everybody |
+
+This is the second payoff of ADR-003. The split was chosen for testability; it turns out to
+be the thing that lets two teams share a codebase without sharing confusion, because the
+architectural lint makes the boundary a build failure rather than a code-review opinion.
+
+**2. A business request has three paths, and most never reach engineering.** Query the
+exported fact table (minutes, nobody blocked) → add a metric module and a test (a PR) → add
+an ingest field (an ADR and a design conversation). Path one exists because ADR-008 exports
+the rows behind the numbers, and it is what makes this a foundation rather than a report
+generator.
+
+**3. No infrastructure is committed.** No Dockerfile, no orchestrator DAG, no IaC. The
+reasoning and the re-add conditions are in [`docs/OPERATIONS.md`](OPERATIONS.md).
+
+**The Dockerfile deserves its own sentence, because its absence is the interesting one.**
+It would be about eight lines and it is genuinely useful — but neither this environment nor
+the machine the work was done on has a working container daemon, so it could not be built
+or run. Committing a container recipe nobody has executed is playbook **AP-13** by
+construction: works under the test runner, fails under the production launcher. Its exact
+contents are written down in the operations doc, marked unverified, so the ten minutes of
+work is queued rather than lost.
+
+**Consequences.**
+
+- The repository stays a pipeline, not a platform. What it needs from a platform —
+  a scheduler, object storage, an alerting target — is documented as an interface rather
+  than an implementation.
+- Publication is by content digest (`runs/<inputs_digest>/` plus a `latest` pointer), which
+  makes "our numbers disagree" a diff and re-publication idempotent.
+- Monitoring names three signals, and the third is the one that matters: a **volume** check
+  against the previous run. A source system that quietly stops delivering one file produces
+  a run that is entirely successful and silently missing part of the business, and nothing
+  else in the manifest would flag it.
+- **This ADR is prose, and prose has no lint.** ADR-014 already demonstrated in this project
+  what happens to a document that asserts behaviour nothing verifies — it went four
+  sessions promising a digest the code never wrote. Everything binding in this ADR is
+  therefore about *people and process*, not about behaviour a reader could mistake for
+  something the build enforces.
+
+**Alternatives considered.**
+
+| Option | Verdict |
+|---|---|
+| Ship a Dockerfile anyway | Rejected — unbuildable here, and AP-13 is the specific anti-pattern that punishes shipping deploy paths nobody ran. Contents recorded instead |
+| Ship an Airflow / Dagster DAG | Rejected — encodes a platform choice that belongs to whoever runs the platform, and would be deleted on arrival |
+| Ship Terraform | Rejected, more so — it would also encode a cloud, an account layout and a naming convention, none of which this project knows |
+| Say nothing about deployment | Rejected — the brief asks directly, and "how would this be owned" is a real design question that the layer split already answers |
+| One team owns everything | Rejected — it is the honest description of a solo take-home, and it wastes the one property ADR-003 bought that a solo project cannot use |
+
+
 ## 4. Open Questions
 
 Every one of these is a decision **not yet made**. Recording them as questions rather
@@ -1117,9 +1194,10 @@ decided, and it changes as evidence arrives.
 | ~~6~~ | ~~**F-01 + F-02 + F-04** — implementation~~ | **Done in session 006.** 115 deterministic tests, 7 system-tier, `make check` green, the sample data reproduces PMA §2.4 exactly. |
 | ~~7~~ | ~~**OQ-06, OQ-08** — the metric set~~ | **Resolved by ADR-015 and ADR-016** (session 007). Four metrics ship; one candidate rejected with a measurement. |
 | ~~8~~ | ~~**OQ-09** — idempotency and late-arriving reverts~~ | **Resolved by ADR-017** (session 008). It also caught an ADR-014 promise the code never kept, and fixed it. |
-| **1** | **OQ-12** — deployment and ownership model | The only thing left. Prose in the README about where this runs, who owns which layer, and how a business user requests a metric — not infrastructure nobody asked for. |
+| ~~9~~ | ~~**OQ-12** — deployment and ownership model~~ | **Resolved by ADR-018** (session 009), written up in `docs/OPERATIONS.md`. |
 
-**Every decision that shapes the code is now made.** What remains is prose.
+**Every open question is now closed.** Eighteen ADRs, nothing outstanding. The
+retrospective in §6 records what this process got wrong, what it cost, and what it caught.
 
 *(This table carried a duplicate OQ-09 row for two sessions, from an edit that appended
 instead of replacing. Noted rather than silently tidied — the PMA is only trustworthy if
@@ -1151,7 +1229,7 @@ Numbers are **not** reserved for unwritten ADRs — see the note under the ADR i
 | OQ-09 | Are re-runs idempotent? What about late-arriving files? | the runner | **Resolved — ADR-017** |
 | OQ-10 | What do the naive timestamps mean? | any time-bucketed metric | **Resolved — ADR-013** |
 | OQ-11 | Is pharmacy reference data point-in-time or current-state? | the pharmacy join | **Resolved — ADR-014** |
-| OQ-12 | Deployment, orchestration and team ownership model? | README prose only | Open — *the only one left* |
+| OQ-12 | Deployment, orchestration and team ownership model? | README prose only | **Resolved — ADR-018** (see [`docs/OPERATIONS.md`](OPERATIONS.md)) |
 
 ---
 
@@ -1251,7 +1329,7 @@ past claims disappear from history? Current-state joins are simple and rewrite h
 point-in-time joins preserve history and need effective dating the file does not
 currently carry.
 
-**OQ-12 — Deployment, orchestration and team ownership?**
+**OQ-12 — Deployment, orchestration and team ownership?** — **RESOLVED by [ADR-018](#adr-018-ownership-follows-the-layer-split-no-infrastructure-ships-in-this-repository) and [`docs/OPERATIONS.md`](OPERATIONS.md).** Retained below as the record of what the question was.
 The brief explicitly invites assumptions about deployment in a multidisciplinary team.
 To settle: where it runs (container on a schedule, orchestrator task, serverless job);
 who owns which layer (data engineering owns `gateway/`, analytics owns `metrics/` — the
@@ -1279,8 +1357,122 @@ says so and the Definition of Done in `CLAUDE.md` is satisfied.
 
 ## 6. Retrospective
 
-To be written as the project matures. It records what the ADRs got wrong, not what they
-got right — a retrospective that only lists successes teaches nothing.
+Written at the close of session 009, with every open question resolved. It records what
+this process got **wrong** first, because a retrospective that only lists successes teaches
+nothing.
+
+### 6.1 What the ADRs got wrong
+
+**The sequencing error (sessions 001 → 002).** Session 001 named OQ-01, the compute engine,
+as the next decision. It was downstream of OQ-07, the extension surface — if metrics are
+Python functions the zero-dependency option wins, and if they are SQL an engine that speaks
+SQL wins. Deciding the engine first would have settled OQ-07 by accident, which is the
+"confident code satisfying an ambiguous spec" failure the playbook opens with.
+
+Caught in session 002, and it **changed the answer**: the spike's provisional lean was
+DuckDB and OQ-01 landed on the standard library. The lesson is that **the order in which
+questions are answered is itself a decision** and deserves the same scrutiny as the answers.
+The PMA now carries a decision order separate from ID order for exactly this reason.
+
+**ADR-014 promised behaviour the code never had (sessions 004 → 008).** It stated that the
+manifest records a digest of the pharmacy file. The manifest recorded directory paths only.
+The promise sat unimplemented for four sessions and was found by accident, while
+investigating a different question.
+
+This is the sharpest lesson in the project. ADR-007's whole thesis is that a rule without
+enforcement is followed until the first deadline — and the architectural lint, the fixture
+guard, the doc-drift check and the catalogue-drift check all exist because of it. **None of
+them can see into a Markdown file.** A document that asserts testable behaviour is an
+unenforced rule, and this project contains proof.
+
+The realistic fix is not more tooling but a discipline: when an ADR states behaviour a test
+could verify, that ADR should either name the test or be rewritten to state an intention
+rather than a fact. ADR-018 is deliberately written that way.
+
+**The PMA carried a duplicate row for two sessions.** The decision-order table gained a
+second OQ-09 line from an edit that appended where it should have replaced. Nobody noticed
+because nobody re-read the table. Programmatic edits to a document need the same
+read-back-and-check that a code change gets from its tests.
+
+**F-04 was marked "depends on no open question", which was true and misleading.** True of
+the registry mechanism; false in the sense that mattered, because building it alone would
+have left an abstraction whose only callers were its own tests — AP-11, the anti-pattern
+`CLAUDE.md` forbids. Caught before implementation, but the feature log said the wrong thing
+for a session.
+
+**A spec can be internally consistent and still carry no information.** F-02 specified
+`resolve_reverts(claims, reverts, accepted_claim_ids)`. The accepted set is derivable from
+`claims`; what resolution genuinely cannot derive is which claims the *gateway quarantined*,
+which is what separates `claim_not_accepted` from `claim_not_found`. The spec was coherent
+and wrong, and only writing the code revealed it.
+
+### 6.2 What the process cost
+
+| | Lines |
+|---|---|
+| `src/` | 1,845 |
+| `tests/` | 3,017 |
+| `scripts/` (lint, hooks, spike, profiler) | 556 |
+| `docs/PROJECT_MEMORY.md` | 1,385 |
+| `docs/DECISION_LOG.md` | 595 |
+| Other docs (operations, features, catalogue, spike, README, CLAUDE.md) | 1,325 |
+
+**Roughly 3,300 lines of documentation for 1,845 lines of implementation.** For this
+deliverable that ratio is defensible — the brief asks explicitly for "the thinking behind
+it", and the ADRs *are* a large part of what is being submitted. For an ordinary project of
+this size it would be too much.
+
+The playbook's own test — *"what deserves an ADR: any decision that, if changed later, would
+require touching more than one file"* — should have been applied more strictly. ADR-013
+(timestamps are UTC) and ADR-014 (reference data is current-state) are each essentially a
+one-line decision that received a full treatment with an alternatives table. They would have
+been better as three paragraphs inside ADR-012, and the project would have had fewer
+documents to keep honest — which, per §6.1, is where two of the four defects came from.
+
+Eighteen ADRs across nine sessions, five of them amended. The amendments are healthy; the
+count is high.
+
+### 6.3 What actually worked
+
+**Measuring before deciding changed three answers.** The engine spike reversed the DuckDB
+lean. The metric-candidate measurements killed `drug_common_quantity` — nine quantities per
+drug at ~11% each — and put a Wilson bound on the reversal rate after the raw rates turned
+out to overlap across every pharmacy. None of those three would have been caught by
+reasoning alone, and all three are recorded with the numbers that decided them.
+
+**Negative ADRs earned their space.** ADR-010 (no DSL, no MCP server, no LLM framework) is
+the document most likely to be re-litigated by a future reader, and it exists precisely so
+that the debate happens once. Naming the *reversal conditions* is what makes a refusal
+useful rather than merely stubborn.
+
+**Rules enforced by tooling caught real violations.** The architectural lint rejected
+`cli.py` importing `pathlib` — written by the same person who wrote the rule — and that
+rejection improved the design, because path handling really is IO handling. The fixture
+guard caught an editor silently reformatting five sample files. The catalogue-drift check
+makes a stale `METRICS.md` impossible rather than unlikely.
+
+**The independent derivation was worth more than a session boundary.** For the metrics, the
+expected values were computed by a throwaway script that re-read the raw files and
+re-applied the rules without importing the package. Every figure matched on the first run.
+A test asserting a number produced by a *different program* is a stronger guard than a test
+written a day earlier by the same person who will write the implementation.
+
+**Layer boundaries caught a design error at write time.** The domain layer was about to
+build JSON by string concatenation to fill a `raw` field. That is serialization, which
+belongs to the gateway — and noticing it produced `ExcludedRevert`, a better type than the
+one originally specified.
+
+### 6.4 If this were started again
+
+1. **Decide the decision order explicitly, in session one**, and treat re-ordering as a
+   first-class event rather than a correction.
+2. **Fewer, larger ADRs.** Group the ones that share a subject; ADR-012/013/014 are one
+   decision about what a reversal means.
+3. **Make prose accountable.** Any ADR asserting testable behaviour names the test that
+   proves it, or is reworded as an intention.
+4. **Keep everything else.** The measure-before-deciding habit, the negative ADRs with
+   reversal conditions, the tooling-enforced boundaries and the independent derivation are
+   the four things that caught real defects.
 
 ---
 

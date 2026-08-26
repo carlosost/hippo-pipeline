@@ -60,8 +60,23 @@ Every input file is hashed as it is read. The manifest carries a `sha256` per fi
 same `inputs_digest` produce byte-identical outputs.** When two people's numbers disagree,
 that turns an argument into a diff.
 
-The only question still open is OQ-12 — how this would be deployed and owned in a
-multidisciplinary team, which is README prose rather than code.
+### Deploying and owning it
+
+[`docs/OPERATIONS.md`](docs/OPERATIONS.md) covers where this runs, who owns which layer,
+how a business user gets a new number without waiting on engineering, how outputs are
+published by content digest, what to alert on, and what breaks at 100×.
+
+The short version: ownership follows the layer split, so data engineering owns `gateway/`
+and analytics engineering owns `metrics/`, and the architectural lint makes that boundary a
+build failure rather than a code-review opinion. **No Dockerfile, orchestrator DAG or IaC
+is committed** — those encode platform decisions belonging to whoever runs the platform,
+and the Dockerfile specifically is absent because no container daemon was available to
+build and test it. Its exact contents are written down, marked unverified. Shipping a
+deploy path nobody has executed is the anti-pattern that punishes exactly this.
+
+**Every open question is now closed** — 18 ADRs, and a
+[retrospective](docs/PROJECT_MEMORY.md) recording what the process got wrong before what it
+got right.
 
 ## Quick start
 

@@ -593,3 +593,69 @@ one that is prose rather than code: where this runs, who owns `gateway/` versus 
 how a business user requests a new metric, and how outputs are versioned and published. The
 brief explicitly invites assumptions about working in a multidisciplinary team, so this is
 answered in the README rather than by building infrastructure nobody asked for.
+
+---
+
+## Session 009 — 2026-08-25 — OQ-12 resolved; the project is complete
+
+**Goal.** Answer the last open question — deployment and ownership — and write the
+retrospective that §6 of the PMA has been promising since session 001.
+
+**ADR-018 and `docs/OPERATIONS.md`.** Two decisions:
+
+1. **Ownership follows the layer boundary from ADR-003.** Data engineering owns
+   `gateway/`, analytics engineering owns `metrics/`, `domain/` is shared because the
+   revert rules are business rules wearing code, and `docs/METRICS.md` is generated so
+   nobody owns it. ADR-003 was chosen for testability; making two-team ownership possible
+   without confusion turns out to be its second payoff, and the architectural lint is what
+   keeps the boundary a build failure rather than a code-review opinion.
+
+2. **No infrastructure ships in this repository.** No orchestrator DAG, no IaC — those
+   encode platform decisions that belong to whoever runs a platform and would be deleted on
+   contact with one.
+
+**The Dockerfile is the interesting absence.** It would be about eight lines and it is
+genuinely useful. Neither this environment nor the machine the work was done on has a
+working container daemon — checked, not assumed — so it could not be built or run.
+Committing a container recipe nobody has executed is **AP-13** by construction: works under
+the test runner, fails under the production launcher. Its exact contents are recorded in
+the operations doc, marked unverified, so ten minutes of work is queued rather than lost.
+
+**The monitoring signal worth naming.** Beyond run outcome and reject rate, a **volume**
+check against the previous run. A source system that quietly stops delivering one file
+produces a run that is entirely successful and silently missing part of the business.
+Nothing else in the manifest would flag it.
+
+**The retrospective.** Four defects recorded, in the order they hurt:
+
+1. The session 001 → 002 sequencing error, which changed the engine answer when corrected.
+2. **ADR-014 promising a digest the code never wrote, for four sessions.** The sharpest
+   lesson here: every enforcement mechanism this project built — the architectural lint, the
+   fixture guard, the doc-drift and catalogue-drift checks — exists because ADR-007 says a
+   rule without enforcement is followed until the first deadline. **None of them can see
+   into a Markdown file.** A document asserting testable behaviour is an unenforced rule,
+   and this repository contains the proof.
+3. A duplicate PMA row that survived two sessions because nobody re-read the table.
+4. A spec (`resolve_reverts`) that was internally consistent and carried no information.
+
+And the cost, stated plainly: **~3,300 lines of documentation for 1,845 lines of
+implementation.** Defensible for a deliverable whose brief asks for the thinking; too much
+for an ordinary project of this size. ADR-013 and ADR-014 are each a one-line decision that
+received a full alternatives table, and would have been better as paragraphs inside
+ADR-012 — which would have left fewer documents to keep honest, and two of the four defects
+came from exactly that.
+
+**What worked, since a retrospective that only lists failures teaches as little as one that
+only lists successes:** measuring before deciding changed three answers (the engine, the
+rejected metric, the Wilson bound); negative ADRs with named reversal conditions stop
+debates recurring; tooling-enforced rules caught real violations including one written by
+the author of the rule; and the independent derivation for the metrics proved stronger than
+a session boundary.
+
+**Verification.** `make check` green; `make test-system` green. 18 ADRs, zero open
+questions.
+
+**Next action.** None. The project is complete: the pipeline runs, every structural
+decision is recorded with its alternatives and reversal conditions, and the retrospective
+is written. What would follow in a real engagement is the first Dockerfile built by someone
+with a daemon, and the volume alert from §6 of the operations doc.
