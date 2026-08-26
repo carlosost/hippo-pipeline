@@ -22,13 +22,21 @@ long-lived artefacts are the input files and the published outputs.
 **Container image.** The image would be a `python:3.12-slim` base, `uv sync --frozen`, and
 `ENTRYPOINT ["uv", "run", "hippo"]`. About eight lines.
 
-**No Dockerfile is committed, and that is deliberate.** Neither this environment nor the
-device it was built on has a working container daemon, so it could not be built or run. An
-untested container recipe is playbook **AP-13** by construction — "works under the test
-runner, fails under the production launcher" — and the gap between "the tests pass" and
-"the deploy path ran" is exactly where first-boot failures live. A recipe nobody has
-executed is a claim, not a deliverable. Adding one is a ten-minute job for whoever has a
-daemon, and the first thing they should do is run the suite *inside* the image.
+**No Dockerfile is committed, and that is deliberate.** It could not be built here, so it
+could not be tested. An untested container recipe is playbook **AP-13** by construction —
+"works under the test runner, fails under the production launcher" — and the gap between
+"the tests pass" and "the deploy path ran" is exactly where first-boot failures live. A
+recipe nobody has executed is a claim, not a deliverable.
+
+Precisely why, since the reason matters to whoever finishes the job: a Docker daemon *does*
+start in the build environment (`dockerd --storage-driver=vfs`, verified). What is missing
+is a reachable **container registry** — Docker Hub, `ghcr.io`, `public.ecr.aws`,
+`mirror.gcr.io` and `quay.io` are all outside the network egress allowlist, and nothing is
+cached, so `FROM python:3.12-slim` has nothing to resolve against.
+
+Adding it is a ten-minute job for anyone whose environment can pull a base image, and **the
+first thing they should do is run the suite inside the image** — `uv run pytest tests/unit
+tests/bdd` as a build step, so the artifact that ships is the artifact the tests ran in.
 
 ## 2. Where it runs, and on what schedule
 
@@ -142,7 +150,7 @@ symptom appears.
 
 | Absent | Why | When to add it |
 |---|---|---|
-| Dockerfile | Could not be built or tested here; an unverified recipe is AP-13 | Immediately, by someone with a daemon, who runs the suite inside the image |
+| Dockerfile | No reachable container registry here, so no base image and no build; an unverified recipe is AP-13 | Immediately, by anyone who can pull a base image — running the suite inside the image as a build step |
 | Orchestrator DAG | Belongs to whoever already runs a platform | When there is a platform to target |
 | Terraform / IaC | Same reason, more so | Same |
 | MCP server, metric DSL, semantic layer | ADR-010, with named reversal conditions | When a live consumer cannot run Python |

@@ -1136,12 +1136,21 @@ generator.
 reasoning and the re-add conditions are in [`docs/OPERATIONS.md`](OPERATIONS.md).
 
 **The Dockerfile deserves its own sentence, because its absence is the interesting one.**
-It would be about eight lines and it is genuinely useful — but neither this environment nor
-the machine the work was done on has a working container daemon, so it could not be built
-or run. Committing a container recipe nobody has executed is playbook **AP-13** by
-construction: works under the test runner, fails under the production launcher. Its exact
-contents are written down in the operations doc, marked unverified, so the ten minutes of
-work is queued rather than lost.
+It would be about eight lines and it is genuinely useful. It is absent because it **cannot
+be built here**, and committing a container recipe nobody has executed is playbook
+**AP-13** by construction: works under the test runner, fails under the production
+launcher.
+
+*Corrected 2026-08-26.* This ADR originally gave the reason as "no working container
+daemon". That was imprecise, and checking again disproved it: a daemon **can** be started
+in the build environment (`dockerd --storage-driver=vfs` comes up and serves
+`/var/run/docker.sock`). The real blocker is one layer further out — **no container
+registry is reachable**. Docker Hub, `ghcr.io`, `public.ecr.aws`, `mirror.gcr.io` and
+`quay.io` are all outside this environment's network egress allowlist, and no base image is
+cached locally, so `FROM python:3.12-slim` cannot resolve. The conclusion is unchanged; the
+stated reason was wrong, and an ADR asserting something the world does not support is the
+ADR-014 failure again in miniature. Its exact contents are written down in the operations
+doc, marked unverified, so the ten minutes of work is queued rather than lost.
 
 **Consequences.**
 
@@ -1399,6 +1408,15 @@ the registry mechanism; false in the sense that mattered, because building it al
 have left an abstraction whose only callers were its own tests — AP-11, the anti-pattern
 `CLAUDE.md` forbids. Caught before implementation, but the feature log said the wrong thing
 for a session.
+
+**An ADR asserted a fact about the world that was not checked (session 009 → 010).**
+ADR-018 justified the missing Dockerfile with "no working container daemon". Re-checking
+one turn later disproved it: a daemon starts fine with the vfs storage driver. The real
+blocker was one layer further out — no container registry is in the network egress
+allowlist, so no base image can be pulled. The *decision* was right and the *reason* was
+wrong, which is the same species as ADR-014's unkept promise and was caught within a day
+only because somebody asked the question again. Claims about the environment deserve the
+same "did you run it?" discipline as claims about the code.
 
 **A spec can be internally consistent and still carry no information.** F-02 specified
 `resolve_reverts(claims, reverts, accepted_claim_ids)`. The accepted set is derivable from

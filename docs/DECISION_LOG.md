@@ -659,3 +659,38 @@ questions.
 decision is recorded with its alternatives and reversal conditions, and the retrospective
 is written. What would follow in a real engagement is the first Dockerfile built by someone
 with a daemon, and the volume alert from §6 of the operations doc.
+
+### Session 010 — 2026-08-26 — a correction: the Dockerfile reason was wrong
+
+Asked to re-check the Docker daemon. Doing so disproved a claim ADR-018 made one session
+earlier.
+
+**What was asserted:** "neither this environment nor the machine the work was done on has a
+working container daemon".
+
+**What is actually true:** a daemon starts fine —
+`dockerd --storage-driver=vfs --iptables=false --bridge=none` comes up and serves
+`/var/run/docker.sock`, confirmed by `docker info` reporting Server Version 29.4.3. The
+device VM has no Docker CLI at all, so that half held; the build environment's half did not.
+
+**The real blocker, one layer further out:** no container registry is reachable. Docker Hub,
+`ghcr.io`, `public.ecr.aws`, `mirror.gcr.io` and `quay.io` all return *"Host not in
+allowlist"* from the network egress policy, and no base image is cached locally. `FROM
+python:3.12-slim` has nothing to resolve against, so the recipe still cannot be built or
+tested and the decision not to ship it stands unchanged.
+
+**Why this is worth a log entry rather than a silent edit.** The decision was right and the
+stated reason was wrong — the same species of defect as ADR-014 promising a digest the code
+never wrote, and recorded for the same reason. It was caught within a day only because
+somebody asked the question a second time. **Claims about the environment deserve the same
+"did you run it?" discipline as claims about the code**, and this one had not been run: the
+first check was `docker info`, which fails identically whether a daemon is absent or merely
+not started.
+
+Added to the retrospective as its fifth defect. Also weighed and rejected: importing this
+container's own filesystem as a base image via `docker import`. It would prove the
+application containerises, but not that the shipped `FROM python:3.12-slim` recipe works —
+and a gigabyte-scale rootfs tar against a fixed disk allowance is a poor trade for a partial
+answer.
+
+**Next action.** Still none. The correction is recorded; the project remains complete.
