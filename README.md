@@ -21,8 +21,8 @@ read 27384  accepted 23296  rejected 3  excluded 4085 (+45 unlinkable reverts)
   missing_field:quantity: 2       non_positive:quantity: 1
 ```
 
-Four metrics ship, and **161 tests** — 149 deterministic (97 unit + 52 acceptance
-scenarios) and 12 system-tier. Zero runtime dependencies.
+Four metrics ship, and **176 tests** — 162 deterministic (110 unit + 52 acceptance
+scenarios) and 14 system-tier. Zero runtime dependencies.
 
 | Metric | Answers |
 |---|---|
@@ -83,9 +83,9 @@ got right.
 Requires [uv](https://docs.astral.sh/uv/) and Python ≥3.10.
 
 ```bash
-git clone <this repo> && cd hippo
+git clone git@github.com:carlosost/hippo-pipeline.git && cd hippo-pipeline
 make setup          # create .venv, install locked dependencies
-make check          # lint + typecheck + 115 deterministic tests — the merge gate
+make check          # lint + typecheck + the deterministic test suite — the merge gate
 
 make run ARGS="run \
   --pharmacies data/sample-data/pharmacies \
