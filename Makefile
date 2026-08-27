@@ -33,8 +33,16 @@ test-system:  ## System-behavior tier - real files, baseline-gated, NOT a merge 
 
 test: test-unit test-bdd  ## Deterministic tiers only (the merge gate)
 
-audit:  ## Dependency vulnerability audit (direct runtime deps are blocking; see AP-14)
-	uv run pip-audit --strict || true
+audit:  ## Dependency vulnerability audit of the locked set (direct runtime deps are blocking; see AP-14)
+	@# Audit the LOCKFILE, not the venv. `pip-audit` on the environment tries to look
+	@# hippo-pipeline up on PyPI, where it does not exist, and --strict then fails the
+	@# whole run - which is why this target used to end in `|| true` and could never
+	@# fail at all (AP-11: a gate that cannot fail is not a gate). Exporting with
+	@# --no-emit-project drops the local package; hashes let pip-audit resolve offline.
+	@tmp=$$(mktemp); \
+	  uv export --all-groups --no-emit-project --format requirements-txt -q -o $$tmp && \
+	  uv run pip-audit -r $$tmp --strict --require-hashes --disable-pip; \
+	  status=$$?; rm -f $$tmp; exit $$status
 
 check: lint typecheck test  ## Everything the merge gate requires
 

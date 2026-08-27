@@ -49,7 +49,7 @@ def strip_code_blocks(text: str) -> str:
 
 
 def slug(heading: str) -> str:
-    """GitHub's heading anchor: lowercase, punctuation dropped, each space becomes a hyphen.
+    r"""GitHub's heading anchor: lowercase, punctuation dropped, each space becomes a hyphen.
 
     `\s` and not `\s+`. github-slugger replaces every space individually, so a heading like
     "Foundation & Specification" - where dropping the ampersand leaves two adjacent spaces -

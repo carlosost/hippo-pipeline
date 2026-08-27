@@ -49,8 +49,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Lowest supported and current: the gap is where "works on my machine" lives.
-        python: ["3.10", "3.12"]
+        # Floor, middle, and ceiling. The ceiling matters: requires-python is >=3.10,
+        # so `uv sync` on a fresh clone picks the NEWEST interpreter available, not
+        # 3.12 - an untested ceiling is the version every reviewer actually runs.
+        python: ["3.10", "3.12", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -93,4 +95,4 @@ jobs:
       # runtime dependencies block; transitive and dev-tooling advisories are
       # time-boxed and reported, not auto-remediated.
       - name: pip-audit
-        run: uv run pip-audit || echo "::warning::pip-audit reported advisories - triage by threat model, do not auto-fix"
+        run: make audit || echo "::warning::pip-audit reported advisories - triage by threat model, do not auto-fix"
